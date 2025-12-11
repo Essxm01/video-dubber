@@ -18,7 +18,7 @@ gTTS==2.5.1
 
 # HTTP & Multipart
 python-multipart==0.0.9
-httpx==0.26.0
+httpx==0.24.1
 aiofiles==23.2.1
 
 # Supabase
