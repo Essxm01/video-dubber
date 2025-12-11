@@ -118,16 +118,38 @@ def update_task(task_id: str, status: str, progress: int, message: str, stage: s
         print(f"📊 Task {task_id[:8]}... - {status}: {progress}% - {message}")
 
 def _download_video(url: str, task_id: str = None):
-    """Download video from YouTube using yt-dlp"""
+    """Download video from YouTube using yt-dlp with bot bypass"""
     if task_id:
         update_task(task_id, TaskStatus.DOWNLOADING, 5, "جاري تحميل الفيديو من يوتيوب...", "DOWNLOAD")
     
+    # Enhanced options to bypass YouTube bot protection
     ydl_opts = {
         "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
         "overwrites": True,
         "quiet": True,
         "no_warnings": True,
+        # Bot bypass options
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
+        # User agent to look like a real browser
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-us,en;q=0.5",
+        },
+        # Retry options
+        "retries": 5,
+        "fragment_retries": 5,
+        "skip_unavailable_fragments": True,
+        # Avoid age restrictions
+        "age_limit": None,
+        # Use cookies from browser if available
+        "cookiesfrombrowser": None,
     }
     
     try:
@@ -146,8 +168,18 @@ def _download_video(url: str, task_id: str = None):
             
             return filename, info.get("title"), info.get("thumbnail")
     except Exception as e:
-        print(f"❌ Download error: {e}")
-        raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {str(e)}")
+        error_msg = str(e)
+        print(f"❌ Download error: {error_msg}")
+        
+        # Provide more helpful error messages
+        if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
+            raise HTTPException(status_code=500, detail="يوتيوب يطلب التحقق. جرب فيديو آخر أو انتظر قليلاً ثم حاول مجدداً.")
+        elif "Video unavailable" in error_msg:
+            raise HTTPException(status_code=400, detail="الفيديو غير متاح أو خاص")
+        elif "Private video" in error_msg:
+            raise HTTPException(status_code=400, detail="هذا فيديو خاص ولا يمكن تحميله")
+        else:
+            raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
 
 def _extract_audio(video_path: str):
     """Extract audio from video file"""
