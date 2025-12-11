@@ -1,3 +1,13 @@
+"""
+Arab Dubbing API - Production Version
+AI-powered video dubbing and translation platform
+
+Uses:
+- faster-whisper (base model) for speech recognition
+- edge-tts for neural Arabic TTS
+- argostranslate for neural translation
+"""
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -7,14 +17,20 @@ from typing import Optional, Dict, Literal
 import uvicorn
 import yt_dlp
 import os
-import whisper
-from deep_translator import GoogleTranslator
-from gtts import gTTS
+import asyncio
+import nest_asyncio
+from faster_whisper import WhisperModel
+import argostranslate.package
+import argostranslate.translate
+import edge_tts
 from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 import moviepy.audio.fx.all as afx
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
+
+# Allow nested asyncio for edge-tts in sync context
+nest_asyncio.apply()
 
 # Load environment variables
 load_dotenv()
@@ -22,16 +38,16 @@ load_dotenv()
 app = FastAPI(
     title="Arab Dubbing API",
     description="AI-powered video dubbing and translation platform - دبلجة العرب",
-    version="1.0.0"
+    version="2.0.0"
 )
 
-# CORS Configuration - Allow frontend domains
+# CORS Configuration
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "https://arab-dubbing.vercel.app",
     "https://arab-dubbing-*.vercel.app",
-    "*"  # Allow all for development
+    "*"
 ]
 
 app.add_middleware(
@@ -50,24 +66,63 @@ OUTPUT_FOLDER = "output"
 for folder in [DOWNLOADS_FOLDER, AUDIO_FOLDER, OUTPUT_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
-# Mount static files for serving output videos
+# Mount static files
 app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
 # ============= Task Management =============
-# In-memory task storage (for production, use Redis or Supabase)
 tasks: Dict[str, dict] = {}
 
-# Load Whisper model on startup (cached)
+# ============= AI Models (Lazy Loading) =============
 WHISPER_MODEL = None
+ARGOS_INSTALLED = False
 
 def get_whisper_model():
-    """Lazy load Whisper model"""
+    """Lazy load faster-whisper model (base for stability on free tier)"""
     global WHISPER_MODEL
     if WHISPER_MODEL is None:
         model_size = os.getenv("WHISPER_MODEL", "base")
-        print(f"🎙️ Loading Whisper model: {model_size}")
-        WHISPER_MODEL = whisper.load_model(model_size)
+        print(f"🎙️ Loading faster-whisper model: {model_size}")
+        WHISPER_MODEL = WhisperModel(model_size, device="cpu", compute_type="int8")
+        print("✅ Whisper model loaded successfully")
     return WHISPER_MODEL
+
+def ensure_argos_installed():
+    """Ensure English to Arabic translation package is installed"""
+    global ARGOS_INSTALLED
+    if ARGOS_INSTALLED:
+        return
+    
+    print("📦 Checking Argos Translate packages...")
+    try:
+        argostranslate.package.update_package_index()
+        available_packages = argostranslate.package.get_available_packages()
+        
+        # Find en->ar package
+        package_to_install = next(
+            (pkg for pkg in available_packages 
+             if pkg.from_code == "en" and pkg.to_code == "ar"),
+            None
+        )
+        
+        if package_to_install:
+            # Check if already installed
+            installed = argostranslate.package.get_installed_packages()
+            already_installed = any(
+                pkg.from_code == "en" and pkg.to_code == "ar" 
+                for pkg in installed
+            )
+            
+            if not already_installed:
+                print("📥 Installing en->ar translation package...")
+                argostranslate.package.install_from_path(package_to_install.download())
+                print("✅ Translation package installed")
+            else:
+                print("✅ Translation package already installed")
+        
+        ARGOS_INSTALLED = True
+    except Exception as e:
+        print(f"⚠️ Argos setup warning: {e}")
+        ARGOS_INSTALLED = True  # Continue anyway
 
 class TaskStatus:
     PENDING = "PENDING"
@@ -83,7 +138,7 @@ class TaskStatus:
 # ============= Models =============
 class VideoRequest(BaseModel):
     url: str
-    target_lang: str = "ar"  # Default to Arabic
+    target_lang: str = "ar"
     mode: Literal["DUBBING", "SUBTITLES", "BOTH"] = "DUBBING"
 
 class TextRequest(BaseModel):
@@ -118,38 +173,27 @@ def update_task(task_id: str, status: str, progress: int, message: str, stage: s
         print(f"📊 Task {task_id[:8]}... - {status}: {progress}% - {message}")
 
 def _download_video(url: str, task_id: str = None):
-    """Download video from YouTube using yt-dlp with bot bypass"""
+    """Download video from YouTube using yt-dlp"""
     if task_id:
         update_task(task_id, TaskStatus.DOWNLOADING, 5, "جاري تحميل الفيديو من يوتيوب...", "DOWNLOAD")
     
-    # Enhanced options to bypass YouTube bot protection
     ydl_opts = {
         "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
         "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
         "overwrites": True,
         "quiet": True,
         "no_warnings": True,
-        # Bot bypass options
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "web"],
                 "player_skip": ["webpage", "configs"],
             }
         },
-        # User agent to look like a real browser
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-us,en;q=0.5",
         },
-        # Retry options
         "retries": 5,
         "fragment_retries": 5,
-        "skip_unavailable_fragments": True,
-        # Avoid age restrictions
-        "age_limit": None,
-        # Use cookies from browser if available
-        "cookiesfrombrowser": None,
     }
     
     try:
@@ -157,29 +201,21 @@ def _download_video(url: str, task_id: str = None):
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             
-            # Ensure file has .mp4 extension
             if not filename.endswith('.mp4'):
                 base = os.path.splitext(filename)[0]
                 if os.path.exists(base + '.mp4'):
                     filename = base + '.mp4'
             
             if task_id:
-                update_task(task_id, TaskStatus.DOWNLOADING, 15, "تم تحميل الفيديو بنجاح", "DOWNLOAD")
+                update_task(task_id, TaskStatus.DOWNLOADING, 15, "تم تحميل الفيديو بنجاح ✓", "DOWNLOAD")
             
             return filename, info.get("title"), info.get("thumbnail")
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Download error: {error_msg}")
-        
-        # Provide more helpful error messages
         if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
-            raise HTTPException(status_code=500, detail="يوتيوب يطلب التحقق. جرب فيديو آخر أو انتظر قليلاً ثم حاول مجدداً.")
-        elif "Video unavailable" in error_msg:
-            raise HTTPException(status_code=400, detail="الفيديو غير متاح أو خاص")
-        elif "Private video" in error_msg:
-            raise HTTPException(status_code=400, detail="هذا فيديو خاص ولا يمكن تحميله")
-        else:
-            raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
+            raise HTTPException(status_code=500, detail="يوتيوب يطلب التحقق. جرب فيديو آخر.")
+        raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
 
 def _extract_audio(video_path: str):
     """Extract audio from video file"""
@@ -198,28 +234,60 @@ def _extract_audio(video_path: str):
         raise
 
 def _transcribe_audio(audio_path: str, task_id: str = None):
-    """Transcribe audio using Whisper AI"""
+    """Transcribe audio using faster-whisper"""
     if task_id:
         update_task(task_id, TaskStatus.TRANSCRIBING, 25, "تحليل الصوت باستخدام Whisper AI...", "TRANSCRIPTION")
     
     try:
         model = get_whisper_model()
-        result = model.transcribe(audio_path, language=None)  # Auto-detect language
+        segments_gen, info = model.transcribe(audio_path, beam_size=5, language=None)
+        
+        # Convert generator to list
+        segments = []
+        full_text = ""
+        for segment in segments_gen:
+            segments.append({
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text
+            })
+            full_text += segment.text + " "
         
         if task_id:
-            update_task(task_id, TaskStatus.TRANSCRIBING, 40, "تم استخراج النص من الصوت", "TRANSCRIPTION")
+            update_task(task_id, TaskStatus.TRANSCRIBING, 40, f"تم استخراج النص (اللغة: {info.language}) ✓", "TRANSCRIPTION")
         
-        return result["segments"], result.get("text", ""), result.get("language", "en")
+        return segments, full_text.strip(), info.language
     except Exception as e:
         print(f"❌ Transcription error: {e}")
         raise
+
+def _translate_text(text: str, source_lang: str = "en", target_lang: str = "ar") -> str:
+    """Translate text using argostranslate"""
+    ensure_argos_installed()
+    
+    try:
+        translated = argostranslate.translate.translate(text, source_lang, target_lang)
+        return translated
+    except Exception as e:
+        print(f"⚠️ Translation error: {e}, returning original")
+        return text
+
+async def _generate_tts_async(text: str, output_path: str, voice: str = "ar-EG-SalmaNeural"):
+    """Generate TTS audio using edge-tts (async)"""
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(output_path)
+
+def _generate_tts(text: str, output_path: str, voice: str = "ar-EG-SalmaNeural"):
+    """Generate TTS audio using edge-tts (sync wrapper)"""
+    asyncio.get_event_loop().run_until_complete(
+        _generate_tts_async(text, output_path, voice)
+    )
 
 def _generate_srt(segments: list, target_lang: str, task_id: str = None) -> str:
     """Generate SRT subtitle file from segments with translation"""
     if task_id:
         update_task(task_id, TaskStatus.GENERATING_SUBTITLES, 70, "تنسيق ملفات الترجمة...", "SUBTITLE_GENERATION")
     
-    translator = GoogleTranslator(source='auto', target=target_lang)
     srt_content = ""
     
     for i, segment in enumerate(segments, 1):
@@ -231,13 +299,9 @@ def _generate_srt(segments: list, target_lang: str, task_id: str = None) -> str:
             continue
         
         # Translate text
-        try:
-            translated_text = translator.translate(text)
-        except Exception as e:
-            print(f"⚠️ Translation fallback for segment {i}: {e}")
-            translated_text = text
+        translated_text = _translate_text(text, "en", target_lang)
         
-        # Convert seconds to SRT time format (HH:MM:SS,mmm)
+        # Convert seconds to SRT time format
         def format_time(seconds):
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
@@ -256,20 +320,19 @@ def _generate_srt(segments: list, target_lang: str, task_id: str = None) -> str:
 def root():
     """API Health Check"""
     return {
-        "message": "Arab Dubbing API - مرحباً بكم في دبلجة العرب 🎬",
-        "version": "1.0.0",
+        "message": "Arab Dubbing API v2.0 - مرحباً بكم في دبلجة العرب 🎬",
+        "version": "2.0.0",
         "status": "active",
-        "endpoints": {
-            "process": "POST /process - Start video processing",
-            "status": "GET /status/{task_id} - Check processing status",
-            "download": "GET /download/{task_id}/{file_type} - Download result",
-            "health": "GET /health - Health check"
+        "ai_stack": {
+            "speech_to_text": "faster-whisper (base)",
+            "translation": "argostranslate (en->ar)",
+            "text_to_speech": "edge-tts (ar-EG-SalmaNeural)"
         }
     }
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint for monitoring"""
+    """Health check endpoint"""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -279,15 +342,7 @@ def health_check():
 
 @app.post("/process", response_model=TaskResponse)
 async def start_processing(req: VideoRequest, background_tasks: BackgroundTasks):
-    """
-    Start video processing job
-    
-    - **url**: YouTube video URL
-    - **target_lang**: Target language code (default: ar for Arabic)
-    - **mode**: DUBBING, SUBTITLES, or BOTH
-    
-    Returns task_id for polling status
-    """
+    """Start video processing job"""
     task_id = str(uuid.uuid4())
     
     # Validate YouTube URL
@@ -308,7 +363,7 @@ async def start_processing(req: VideoRequest, background_tasks: BackgroundTasks)
         "result": None
     }
     
-    print(f"🚀 New task created: {task_id} - Mode: {req.mode} - Lang: {req.target_lang}")
+    print(f"🚀 New task: {task_id} - Mode: {req.mode}")
     
     # Start background processing
     background_tasks.add_task(process_video_task, task_id, req)
@@ -322,18 +377,18 @@ async def start_processing(req: VideoRequest, background_tasks: BackgroundTasks)
     )
 
 async def process_video_task(task_id: str, req: VideoRequest):
-    """Background task for complete video processing pipeline"""
+    """Background task for video processing pipeline"""
     try:
         print(f"📹 Starting processing for task: {task_id[:8]}...")
         
-        # ========== STEP 1: Download Video ==========
+        # STEP 1: Download Video
         video_path, title, thumbnail = _download_video(req.url, task_id)
         update_task(task_id, TaskStatus.DOWNLOADING, 20, "تم تحميل الفيديو بنجاح ✓", "DOWNLOAD")
         
-        # ========== STEP 2: Extract Audio ==========
+        # STEP 2: Extract Audio
         audio_path = _extract_audio(video_path)
         
-        # ========== STEP 3: Transcribe with Whisper ==========
+        # STEP 3: Transcribe with faster-whisper
         segments, full_text, detected_lang = _transcribe_audio(audio_path, task_id)
         update_task(task_id, TaskStatus.TRANSCRIBING, 45, f"تم استخراج النص (اللغة: {detected_lang}) ✓", "TRANSCRIPTION")
         
@@ -345,7 +400,7 @@ async def process_video_task(task_id: str, req: VideoRequest):
             "detected_language": detected_lang
         }
         
-        # ========== STEP 4: Process based on mode ==========
+        # STEP 4: Process based on mode
         
         # --- SUBTITLES MODE ---
         if req.mode in ["SUBTITLES", "BOTH"]:
@@ -368,9 +423,12 @@ async def process_video_task(task_id: str, req: VideoRequest):
             
             audio_clips = []
             translated_texts = []
-            translator = GoogleTranslator(source='auto', target=req.target_lang)
-            
             total_segments = len(segments)
+            
+            # Choose TTS voice based on target language
+            tts_voice = "ar-EG-SalmaNeural"  # Egyptian Arabic female
+            if req.target_lang == "ar":
+                tts_voice = "ar-EG-SalmaNeural"
             
             for i, segment in enumerate(segments):
                 start_time = segment['start']
@@ -381,12 +439,8 @@ async def process_video_task(task_id: str, req: VideoRequest):
                     continue
                 
                 # Translate text
-                try:
-                    translated_text = translator.translate(original_text)
-                    translated_texts.append(translated_text)
-                except Exception as e:
-                    print(f"⚠️ Translation error for segment {i}: {e}")
-                    translated_text = original_text
+                translated_text = _translate_text(original_text, detected_lang or "en", req.target_lang)
+                translated_texts.append(translated_text)
                 
                 # Generate TTS audio
                 update_task(task_id, TaskStatus.GENERATING_AUDIO, 
@@ -395,20 +449,21 @@ async def process_video_task(task_id: str, req: VideoRequest):
                            "VOICE_GENERATION")
                 
                 try:
-                    tts = gTTS(text=translated_text, lang=req.target_lang, slow=False)
                     segment_audio_name = f"seg_{task_id[:8]}_{i}.mp3"
                     segment_audio_path = os.path.join(AUDIO_FOLDER, segment_audio_name)
-                    tts.save(segment_audio_path)
                     
-                    # Create audio clip and align with video timeline
+                    # Generate TTS with edge-tts
+                    _generate_tts(translated_text, segment_audio_path, tts_voice)
+                    
+                    # Create audio clip and align
                     audio_clip = AudioFileClip(segment_audio_path)
                     
-                    # Adjust speed to fit segment duration
+                    # Adjust speed to fit segment
                     segment_duration = end_time - start_time
                     current_duration = audio_clip.duration
                     
                     if current_duration > segment_duration and segment_duration > 0:
-                        speed_factor = min(current_duration / segment_duration, 1.8)  # Cap at 1.8x
+                        speed_factor = min(current_duration / segment_duration, 1.8)
                         audio_clip = audio_clip.fx(afx.speedx, speed_factor)
                     
                     audio_clip = audio_clip.set_start(start_time)
@@ -418,7 +473,7 @@ async def process_video_task(task_id: str, req: VideoRequest):
                     print(f"⚠️ TTS error for segment {i}: {e}")
                     continue
             
-            # ========== STEP 5: Merge Audio with Video ==========
+            # STEP 5: Merge Audio with Video
             if audio_clips:
                 update_task(task_id, TaskStatus.MERGING, 88, "دمج ومزامنة الصوت مع الفيديو...", "SYNCING")
                 
@@ -449,9 +504,9 @@ async def process_video_task(task_id: str, req: VideoRequest):
                 
                 update_task(task_id, TaskStatus.MERGING, 95, "تم دمج الصوت مع الفيديو ✓", "SYNCING")
         
-        # ========== COMPLETE ==========
+        # COMPLETE
         update_task(task_id, TaskStatus.COMPLETED, 100, "تمت العملية بنجاح! 🎉", "FINALIZING", result)
-        print(f"✅ Task completed successfully: {task_id[:8]}")
+        print(f"✅ Task completed: {task_id[:8]}")
         
     except Exception as e:
         import traceback
@@ -488,7 +543,7 @@ def download_file(task_id: str, file_type: Literal["video", "audio", "srt"]):
     if file_type == "video" and "dubbed_video_path" in result:
         return FileResponse(
             result["dubbed_video_path"], 
-            filename=f"dubbed_video.mp4",
+            filename="dubbed_video.mp4",
             media_type="video/mp4"
         )
     elif file_type == "srt" and "srt_path" in result:
@@ -500,34 +555,23 @@ def download_file(task_id: str, file_type: Literal["video", "audio", "srt"]):
     else:
         raise HTTPException(status_code=404, detail=f"الملف '{file_type}' غير متوفر")
 
-# ============= Legacy Endpoints (backwards compatibility) =============
-
-@app.post("/download")
-def download_endpoint(url: str):
-    """Legacy: Download video only"""
-    try:
-        path, title, thumb = _download_video(url)
-        return {"status": "success", "file_path": path, "title": title, "thumbnail": thumb}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+# ============= Legacy Endpoints =============
 @app.post("/translate")
 def translate_endpoint(req: TextRequest):
     """Translate text to target language"""
     try:
-        translated = GoogleTranslator(source='auto', target=req.target_lang).translate(req.text)
+        translated = _translate_text(req.text, "en", req.target_lang)
         return {"status": "success", "translated_text": translated, "source_text": req.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate-audio")
-def tts_endpoint(req: TTSRequest):
+async def tts_endpoint(req: TTSRequest):
     """Generate TTS audio from text"""
     try:
-        tts = gTTS(text=req.text, lang=req.lang)
         output_filename = f"tts_{req.lang}_{abs(hash(req.text)) % 10000}.mp3"
         output_path = os.path.join(AUDIO_FOLDER, output_filename)
-        tts.save(output_path)
+        _generate_tts(req.text, output_path)
         return {"status": "success", "audio_path": output_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -535,11 +579,14 @@ def tts_endpoint(req: TTSRequest):
 # ============= Startup =============
 @app.on_event("startup")
 async def startup_event():
-    """Pre-load Whisper model on startup"""
-    print("🚀 Arab Dubbing API Starting...")
-    print(f"📁 Downloads folder: {os.path.abspath(DOWNLOADS_FOLDER)}")
-    print(f"📁 Audio folder: {os.path.abspath(AUDIO_FOLDER)}")
-    print(f"📁 Output folder: {os.path.abspath(OUTPUT_FOLDER)}")
+    """Initialize on startup"""
+    print("🚀 Arab Dubbing API v2.0 Starting...")
+    print(f"📁 Downloads: {os.path.abspath(DOWNLOADS_FOLDER)}")
+    print(f"📁 Audio: {os.path.abspath(AUDIO_FOLDER)}")
+    print(f"📁 Output: {os.path.abspath(OUTPUT_FOLDER)}")
+    
+    # Pre-install argos translation package
+    ensure_argos_installed()
     
     # Optionally pre-load Whisper model
     if os.getenv("PRELOAD_WHISPER", "false").lower() == "true":
