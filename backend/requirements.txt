@@ -8,3 +8,4 @@ gTTS
 ffmpeg-python
 python-multipart
 torch
+gunicorn
