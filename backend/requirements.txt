@@ -1,11 +1,31 @@
-fastapi
-uvicorn
-yt-dlp
+# Core Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+gunicorn==21.2.0
+
+# Video Processing
+yt-dlp==2024.4.9
 moviepy==1.0.3
-openai-whisper
-deep-translator
-gTTS
-ffmpeg-python
-python-multipart
-torch
-gunicorn
+ffmpeg-python==0.2.0
+
+# AI/ML - Speech Processing
+openai-whisper==20231117
+torch==2.1.2
+
+# Translation & TTS
+deep-translator==1.11.4
+gTTS==2.5.1
+
+# HTTP & Multipart
+python-multipart==0.0.9
+httpx==0.26.0
+aiofiles==23.2.1
+
+# Supabase
+supabase==2.3.0
+
+# Environment
+python-dotenv==1.0.1
+
+# Utilities
+pydantic==2.6.0
