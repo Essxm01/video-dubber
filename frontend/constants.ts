@@ -33,6 +33,7 @@ export const TRANSLATIONS = {
     myVideosTitle: "فيديوهاتي",
     login: "تسجيل دخول",
     logout: "تسجيل خروج",
+    settings: "الإعدادات",
     heroBadge: "مجاني بالكامل 100%",
     heroTitle: "دبلج وترجم فيديوهاتك",
     heroHighlight: "بذكاء اصطناعي متطور",
@@ -40,7 +41,7 @@ export const TRANSLATIONS = {
     placeholder: "ضع رابط فيديو يوتيوب هنا...",
     startBtn: "ابدأ المعالجة",
     features: ['ترجمة دقيقة', 'دبلجة صوتية', 'ملفات SRT', 'مجاني للأبد'],
-    
+
     // Service Modes
     modeDubbing: "دبلجة صوتية",
     modeDubbingDesc: "تحويل صوت المتحدث إلى العربية مع مزامنة الشفاه.",
@@ -66,7 +67,7 @@ export const TRANSLATIONS = {
     noVideos: "لا توجد فيديوهات محفوظة",
     noVideosDesc: "لم تقم بدبلجة أي فيديو في هذا الحساب حتى الآن. ابدأ الآن!",
     watchBtn: "مشاهدة النتيجة",
-    
+
     // Auth
     welcomeBack: "مرحباً بعودتك",
     loginDesc: "سجل الدخول للمتابعة إلى دبلجة العرب",
@@ -107,23 +108,23 @@ export const TRANSLATIONS = {
     featuresSectionTitle: "لماذا تختار دبلجة العرب؟",
     featuresSectionDesc: "حلول متكاملة للدبلجة والترجمة في منصة واحدة.",
     featureCards: [
-        { title: "حرية الاختيار", desc: "لست مجبراً على الدبلجة فقط، يمكنك طلب ملفات الترجمة فقط أو كليهما." },
-        { title: "مجاني بالكامل", desc: "استمتع بجميع الميزات المتقدمة دون دفع أي رسوم أو اشتراكات مخفية." },
-        { title: "استنساخ الصوت", desc: "نحافظ على نبرة المتحدث الأصلي وخامة صوته لتبدو الدبلجة طبيعية تماماً." },
-        { title: "ترجمة دقيقة", desc: "نستخدم نماذج لغوية تفهم السياق لإنتاج ترجمات صحيحة لغوياً وثقافياً." },
-        { title: "سرعة خيالية", desc: "فيديو مدته ساعة يتم دبلجته في دقائق معدودة بفضل معالجاتنا السحابية." },
-        { title: "جودة 4K", desc: "نحافظ على جودة الفيديو الأصلية دون أي فقدان في الوضوح." }
+      { title: "حرية الاختيار", desc: "لست مجبراً على الدبلجة فقط، يمكنك طلب ملفات الترجمة فقط أو كليهما." },
+      { title: "مجاني بالكامل", desc: "استمتع بجميع الميزات المتقدمة دون دفع أي رسوم أو اشتراكات مخفية." },
+      { title: "استنساخ الصوت", desc: "نحافظ على نبرة المتحدث الأصلي وخامة صوته لتبدو الدبلجة طبيعية تماماً." },
+      { title: "ترجمة دقيقة", desc: "نستخدم نماذج لغوية تفهم السياق لإنتاج ترجمات صحيحة لغوياً وثقافياً." },
+      { title: "سرعة خيالية", desc: "فيديو مدته ساعة يتم دبلجته في دقائق معدودة بفضل معالجاتنا السحابية." },
+      { title: "جودة 4K", desc: "نحافظ على جودة الفيديو الأصلية دون أي فقدان في الوضوح." }
     ],
     useCasesTitle: "لمن بنينا دبلجة العرب؟",
     useCases: [
-        { title: "صناع المحتوى", desc: "وسع جمهورك للوطن العربي وضاعف مشاهداتك." },
-        { title: "المنصات التعليمية", desc: "ترجم الكورسات العالمية لطلابك بضغطة زر." },
-        { title: "المسوقين", desc: "استخدم إعلانات عالمية ناجحة وأعد إطلاقها محلياً." }
+      { title: "صناع المحتوى", desc: "وسع جمهورك للوطن العربي وضاعف مشاهداتك." },
+      { title: "المنصات التعليمية", desc: "ترجم الكورسات العالمية لطلابك بضغطة زر." },
+      { title: "المسوقين", desc: "استخدم إعلانات عالمية ناجحة وأعد إطلاقها محلياً." }
     ],
     ctaTitle: "جاهز لتجربة السحر؟",
     ctaDesc: "انضم إلينا وابدأ دبلجة وترجمة الفيديو الأول مجاناً وبدون أي قيود.",
     ctaBtn: "ابدأ الآن",
-    
+
     // FAQ
     faqTitle: "الأسئلة الشائعة",
     faqDesc: "إجابات على الأسئلة الأكثر شيوعاً حول دبلجة العرب",
@@ -154,6 +155,7 @@ export const TRANSLATIONS = {
     myVideosTitle: "My Videos",
     login: "Login",
     logout: "Logout",
+    settings: "Settings",
     heroBadge: "100% Free Forever",
     heroTitle: "Dub & Translate Videos",
     heroHighlight: "Using Advanced AI",
@@ -187,7 +189,7 @@ export const TRANSLATIONS = {
     noVideos: "No videos saved",
     noVideosDesc: "You haven't dubbed any videos on this account yet. Start now!",
     watchBtn: "Watch Result",
-    
+
     // Auth
     welcomeBack: "Welcome Back",
     loginDesc: "Sign in to continue to Arab Dubbing",
@@ -213,7 +215,7 @@ export const TRANSLATIONS = {
     generate_voice: 'Voice Dubbing',
     generate_subs: 'Subtitle Formatting',
     sync_merge: 'Sync & Merge',
-     // How It Works
+    // How It Works
     howTitle: "How Arab Dubbing Works?",
     howDesc: "We use a complex chain of AI models to deliver the best results for free",
     step1Title: "Video Analysis",
@@ -228,18 +230,18 @@ export const TRANSLATIONS = {
     featuresSectionTitle: "Why Choose Arab Dubbing?",
     featuresSectionDesc: "Complete solution for Dubbing and Translation.",
     featureCards: [
-        { title: "Your Choice", desc: "Not forced to dub. Choose subtitles only if you prefer keeping original audio." },
-        { title: "Completely Free", desc: "Enjoy all premium features without paying any fees or hidden subscriptions." },
-        { title: "Voice Cloning", desc: "We preserve the original speaker's tone and texture for 100% natural results." },
-        { title: "Context Aware", desc: "We don't just translate words; we translate meaning using advanced LLMs." },
-        { title: "Blazing Fast", desc: "A one-hour video takes minutes to process using our cloud GPUs." },
-        { title: "4K Quality", desc: "We maintain the original video fidelity with zero quality loss." }
+      { title: "Your Choice", desc: "Not forced to dub. Choose subtitles only if you prefer keeping original audio." },
+      { title: "Completely Free", desc: "Enjoy all premium features without paying any fees or hidden subscriptions." },
+      { title: "Voice Cloning", desc: "We preserve the original speaker's tone and texture for 100% natural results." },
+      { title: "Context Aware", desc: "We don't just translate words; we translate meaning using advanced LLMs." },
+      { title: "Blazing Fast", desc: "A one-hour video takes minutes to process using our cloud GPUs." },
+      { title: "4K Quality", desc: "We maintain the original video fidelity with zero quality loss." }
     ],
     useCasesTitle: "Who is this for?",
     useCases: [
-        { title: "Content Creators", desc: "Expand to the Arab world and double your views." },
-        { title: "EdTech Platforms", desc: "Translate global courses for your students instantly." },
-        { title: "Marketers", desc: "Localize successful global ads for the MENA region." }
+      { title: "Content Creators", desc: "Expand to the Arab world and double your views." },
+      { title: "EdTech Platforms", desc: "Translate global courses for your students instantly." },
+      { title: "Marketers", desc: "Localize successful global ads for the MENA region." }
     ],
     ctaTitle: "Ready to experience the magic?",
     ctaDesc: "Join us and start dubbing your first video for free without limits.",
