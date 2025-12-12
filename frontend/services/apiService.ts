@@ -93,6 +93,39 @@ export async function startProcessing(
 }
 
 /**
+ * Upload video file directly for processing (bypasses YouTube restrictions)
+ */
+export async function uploadVideo(
+  file: File,
+  mode: ServiceMode,
+  targetLang: string = 'ar',
+  onProgress?: (progress: number) => void
+): Promise<{ taskId: string; success: boolean; error?: string }> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('mode', mode);
+    formData.append('target_lang', targetLang);
+
+    const response = await fetch(`${BACKEND_URL}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      return { taskId: '', success: false, error: error.detail || 'فشل رفع الملف' };
+    }
+
+    const data: ProcessResponse = await response.json();
+    return { taskId: data.task_id, success: true };
+  } catch (error) {
+    console.error('Upload Error:', error);
+    return { taskId: '', success: false, error: 'فشل رفع الملف. تحقق من الاتصال.' };
+  }
+}
+
+/**
  * Poll for task status
  */
 export async function getTaskStatus(taskId: string): Promise<{
@@ -103,13 +136,13 @@ export async function getTaskStatus(taskId: string): Promise<{
 }> {
   try {
     const response = await fetch(`${BACKEND_URL}/status/${taskId}`);
-    
+
     if (!response.ok) {
       throw new Error('Failed to get status');
     }
 
     const data: ProcessResponse = await response.json();
-    
+
     return {
       status: {
         taskId: data.task_id,
@@ -146,12 +179,23 @@ export function getOutputUrl(path: string): string {
 
 /**
  * Check if backend is healthy
+ * Uses root "/" endpoint for Render health check compatibility
  */
 export async function checkBackendHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${BACKEND_URL}/health`, { method: 'GET' });
+    // Use AbortController for timeout (Render free tier can be slow to wake up)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+    const response = await fetch(`${BACKEND_URL}/`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
     return response.ok;
-  } catch {
+  } catch (error) {
+    console.warn('Backend health check failed:', error);
     return false;
   }
 }
@@ -175,7 +219,7 @@ export function startRealProcessing(
     try {
       // Start the processing job
       const { taskId, success, error } = await startProcessing(url, mode, targetLang);
-      
+
       if (!success || !taskId) {
         onError(error || 'فشل بدء المعالجة');
         return;
@@ -190,7 +234,7 @@ export function startRealProcessing(
 
         try {
           const { status, completed, failed, result } = await getTaskStatus(taskId);
-          
+
           onUpdate(status);
 
           if (completed) {
