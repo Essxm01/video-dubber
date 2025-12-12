@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.1
 gunicorn==21.2.0
 
 # Video Processing
-yt-dlp==2024.4.9
+yt-dlp>=2024.12.6
 moviepy==1.0.3
 ffmpeg-python==0.2.0
 

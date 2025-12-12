@@ -107,70 +107,169 @@ def update_task(task_id: str, status: str, progress: int, message: str, stage: s
         print(f"📊 Task {task_id[:8]}... - {status}: {progress}% - {message}")
 
 def _download_video(url: str, task_id: str = None):
-    """Download video from YouTube using yt-dlp with bot-bypass settings"""
+    """
+    Download video from YouTube using yt-dlp with ADVANCED bot-bypass techniques.
+    
+    Strategies:
+    1. Android client (most stable for servers)
+    2. Audio-only fallback (then convert)
+    3. Force IPv4 to bypass IPv6 blocks
+    """
     if task_id:
         update_task(task_id, TaskStatus.DOWNLOADING, 5, "جاري تحميل الفيديو من يوتيوب...", "DOWNLOAD")
     
-    # Enhanced yt-dlp options to bypass YouTube bot detection
-    ydl_opts = {
-        "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
-        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
-        "overwrites": True,
-        "quiet": True,
-        "no_warnings": True,
-        # Use multiple clients - iOS works best for bypassing bot detection
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "web"],
-                "player_skip": ["webpage", "configs", "js"],
-            }
-        },
-        # Browser-like headers
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
-            "Connection": "keep-alive",
-        },
-        "retries": 10,
-        "fragment_retries": 10,
-        # Additional bypass options
-        "sleep_interval": 1,
-        "max_sleep_interval": 3,
-        "ignoreerrors": False,
-        "no_check_certificate": True,
-        # Cookies (empty but helps sometimes)
-        "cookiefile": None,
+    # Common robust headers to mimic real browser
+    BROWSER_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
     }
     
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            
-            if not filename.endswith('.mp4'):
-                base = os.path.splitext(filename)[0]
-                if os.path.exists(base + '.mp4'):
-                    filename = base + '.mp4'
+    # ============= STRATEGY 1: Android Client (Primary) =============
+    primary_opts = {
+        "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
+        "format": "best[height<=720][ext=mp4]/best[height<=720]/best",
+        "overwrites": True,
+        "quiet": False,
+        "no_warnings": False,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "player_skip": ["configs", "js"],
+            }
+        },
+        "http_headers": BROWSER_HEADERS,
+        # Force IPv4 to bypass potential IPv6 blocks on Render
+        "source_address": "0.0.0.0",
+        "retries": 10,
+        "fragment_retries": 10,
+        "file_access_retries": 5,
+        "socket_timeout": 60,
+        "extractor_retries": 5,
+        # Bypass age restrictions
+        "age_limit": None,
+        # Don't check SSL (sometimes helps)
+        "nocheckcertificate": True,
+    }
+    
+    # ============= STRATEGY 2: Audio-Only Fallback =============
+    audio_fallback_opts = {
+        "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "overwrites": True,
+        "quiet": False,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android"],
+            }
+        },
+        "http_headers": BROWSER_HEADERS,
+        "source_address": "0.0.0.0",
+        "retries": 5,
+        "socket_timeout": 60,
+        "nocheckcertificate": True,
+        # Post-process to mp4 if needed
+        "postprocessors": [{
+            "key": "FFmpegVideoConvertor",
+            "preferedformat": "mp4",
+        }] if False else [],  # Disabled for now
+    }
+    
+    # ============= STRATEGY 3: Minimal Options =============
+    minimal_opts = {
+        "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
+        "format": "worst[ext=mp4]/worst",  # Get smallest file
+        "overwrites": True,
+        "quiet": False,
+        "source_address": "0.0.0.0",
+        "retries": 3,
+        "socket_timeout": 30,
+        "nocheckcertificate": True,
+    }
+    
+    strategies = [
+        {"name": "Android Client (Primary)", "opts": primary_opts},
+        {"name": "Audio Fallback", "opts": audio_fallback_opts},
+        {"name": "Minimal Config", "opts": minimal_opts},
+    ]
+    
+    last_error = None
+    
+    for i, strategy in enumerate(strategies):
+        try:
+            print(f"\n{'='*50}")
+            print(f"🔄 [{i+1}/{len(strategies)}] Trying: {strategy['name']}")
+            print(f"{'='*50}")
             
             if task_id:
-                update_task(task_id, TaskStatus.DOWNLOADING, 15, "تم تحميل الفيديو بنجاح ✓", "DOWNLOAD")
+                update_task(task_id, TaskStatus.DOWNLOADING, 5 + (i * 3), 
+                           f"محاولة التحميل ({strategy['name']})...", "DOWNLOAD")
             
-            return filename, info.get("title"), info.get("thumbnail")
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Download error: {error_msg}")
-        
-        # Provide helpful error messages in Arabic
-        if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
-            raise HTTPException(status_code=500, detail="يوتيوب يمنع التحميل من السيرفر. جرب فيديو أقصر أو أقدم.")
-        elif "Video unavailable" in error_msg:
-            raise HTTPException(status_code=500, detail="هذا الفيديو غير متاح أو خاص.")
-        elif "age" in error_msg.lower():
-            raise HTTPException(status_code=500, detail="هذا الفيديو يتطلب تسجيل دخول (محتوى للكبار).")
-        else:
-            raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
+            with yt_dlp.YoutubeDL(strategy["opts"]) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                
+                # Find the actual file
+                base = os.path.splitext(filename)[0]
+                for ext in ['.mp4', '.webm', '.mkv', '.m4a', '.mp3']:
+                    if os.path.exists(base + ext):
+                        filename = base + ext
+                        break
+                
+                if not os.path.exists(filename):
+                    # Try to find any file with the video ID
+                    video_id = info.get('id', '')
+                    for f in os.listdir(DOWNLOADS_FOLDER):
+                        if video_id in f:
+                            filename = os.path.join(DOWNLOADS_FOLDER, f)
+                            break
+                
+                if os.path.exists(filename):
+                    if task_id:
+                        update_task(task_id, TaskStatus.DOWNLOADING, 15, 
+                                   f"✅ تم التحميل بنجاح ({strategy['name']})", "DOWNLOAD")
+                    
+                    print(f"✅ SUCCESS with strategy: {strategy['name']}")
+                    print(f"📁 File: {filename}")
+                    return filename, info.get("title", "Unknown"), info.get("thumbnail", "")
+                else:
+                    raise Exception(f"File not found after download: {filename}")
+                    
+        except Exception as e:
+            last_error = str(e)
+            print(f"❌ Strategy '{strategy['name']}' FAILED:")
+            print(f"   Error: {last_error[:150]}")
+            continue
+    
+    # ============= ALL STRATEGIES FAILED =============
+    print(f"\n{'='*50}")
+    print(f"❌ ALL {len(strategies)} STRATEGIES FAILED")
+    print(f"Last error: {last_error}")
+    print(f"{'='*50}\n")
+    
+    # Provide user-friendly error message
+    error_lower = str(last_error).lower()
+    if any(x in error_lower for x in ["sign in", "bot", "confirm", "verify"]):
+        raise HTTPException(
+            status_code=500, 
+            detail="⚠️ يوتيوب يحظر هذا الفيديو من السيرفر. جرب فيديو آخر (قديم أو من قناة صغيرة)."
+        )
+    elif "unavailable" in error_lower or "private" in error_lower:
+        raise HTTPException(status_code=500, detail="❌ هذا الفيديو خاص أو غير متاح.")
+    elif "age" in error_lower:
+        raise HTTPException(status_code=500, detail="🔞 هذا الفيديو للكبار فقط ويتطلب تسجيل دخول.")
+    elif "copyright" in error_lower:
+        raise HTTPException(status_code=500, detail="⚖️ هذا الفيديو محمي بحقوق الطبع والنشر.")
+    else:
+        raise HTTPException(status_code=500, detail=f"❌ فشل التحميل: {str(last_error)[:100]}")
 
 # ============= LAZY LOADING FUNCTIONS =============
 def load_whisper_model():
