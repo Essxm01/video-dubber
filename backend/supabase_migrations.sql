@@ -1,5 +1,5 @@
 -- ============================================
--- SUPABASE MIGRATION: Arab Dubbing Platform
+-- SUPABASE MIGRATION: Arab Dubbing Platform v3.0
 -- Run this in Supabase SQL Editor
 -- ============================================
 
@@ -19,13 +19,16 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- Enable RLS
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies
+-- RLS Policies for profiles
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
 CREATE POLICY "Users can view own profile" ON public.profiles
     FOR SELECT USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile" ON public.profiles
     FOR UPDATE USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile" ON public.profiles
     FOR INSERT WITH CHECK (auth.uid() = id);
 
@@ -43,44 +46,71 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Drop if exists and recreate
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ============================================
--- 2. PROJECTS TABLE (Dubbing History)
+-- 2. PROJECTS TABLE (Task Status & History)
+-- UPDATED: Now used for tracking processing status
 -- ============================================
-CREATE TABLE IF NOT EXISTS public.projects (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-    youtube_url TEXT NOT NULL,
+DROP TABLE IF EXISTS public.projects;
+
+CREATE TABLE public.projects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    
+    -- Video Info
     title TEXT,
     thumbnail TEXT,
-    mode TEXT CHECK (mode IN ('DUBBING', 'SUBTITLES', 'BOTH')),
-    status TEXT CHECK (status IN ('pending', 'processing', 'completed', 'failed')) DEFAULT 'pending',
+    source TEXT DEFAULT 'upload',  -- 'upload' or 'youtube'
+    youtube_url TEXT,
+    
+    -- Processing Mode
+    mode TEXT CHECK (mode IN ('DUBBING', 'SUBTITLES', 'BOTH')) DEFAULT 'DUBBING',
+    target_lang TEXT DEFAULT 'ar',
+    
+    -- Processing Status (for real-time tracking)
+    status TEXT DEFAULT 'PENDING',
+    progress INTEGER DEFAULT 0,
+    message TEXT DEFAULT '',
+    stage TEXT DEFAULT 'PENDING',
+    
+    -- Results
+    result JSONB DEFAULT '{}',
     output_video_url TEXT,
     output_srt_url TEXT,
     original_text TEXT,
     translated_text TEXT,
     detected_language TEXT,
+    
+    -- Timestamps
     created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
+
+-- Create index for faster status lookups
+CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_id ON public.projects(id);
 
 -- Enable RLS
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies
-CREATE POLICY "Users can view own projects" ON public.projects
-    FOR SELECT USING (auth.uid() = user_id);
+-- RLS Policies for projects
+-- IMPORTANT: Allow public read for status checking (no auth required for status)
+DROP POLICY IF EXISTS "Anyone can read projects by ID" ON public.projects;
+CREATE POLICY "Anyone can read projects by ID" ON public.projects
+    FOR SELECT USING (true);
 
-CREATE POLICY "Users can insert own projects" ON public.projects
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Service can insert projects" ON public.projects;
+CREATE POLICY "Service can insert projects" ON public.projects
+    FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Users can update own projects" ON public.projects
-    FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Service can update projects" ON public.projects;
+CREATE POLICY "Service can update projects" ON public.projects
+    FOR UPDATE USING (true);
 
 -- ============================================
 -- 3. STORAGE BUCKET FOR AVATARS
@@ -90,14 +120,17 @@ VALUES ('avatars', 'avatars', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Storage policies for avatars
+DROP POLICY IF EXISTS "Avatar images are publicly accessible" ON storage.objects;
 CREATE POLICY "Avatar images are publicly accessible"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'avatars');
 
+DROP POLICY IF EXISTS "Users can upload their own avatar" ON storage.objects;
 CREATE POLICY "Users can upload their own avatar"
 ON storage.objects FOR INSERT
 WITH CHECK (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can update their own avatar" ON storage.objects;
 CREATE POLICY "Users can update their own avatar"
 ON storage.objects FOR UPDATE
 USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -118,5 +151,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- SUCCESS MESSAGE
 -- ============================================
 -- If you see this without errors, the migration was successful!
--- Tables created: profiles, projects
--- Storage bucket created: avatars
+-- Tables: profiles, projects (with status tracking)
+-- Storage bucket: avatars
+--
+-- The projects table now stores:
+-- - Task processing status (progress, message, stage)
+-- - Results as JSONB (video_url, srt_url, etc.)
+-- - Public read access for status polling
