@@ -107,27 +107,41 @@ def update_task(task_id: str, status: str, progress: int, message: str, stage: s
         print(f"📊 Task {task_id[:8]}... - {status}: {progress}% - {message}")
 
 def _download_video(url: str, task_id: str = None):
-    """Download video from YouTube using yt-dlp"""
+    """Download video from YouTube using yt-dlp with bot-bypass settings"""
     if task_id:
         update_task(task_id, TaskStatus.DOWNLOADING, 5, "جاري تحميل الفيديو من يوتيوب...", "DOWNLOAD")
     
+    # Enhanced yt-dlp options to bypass YouTube bot detection
     ydl_opts = {
         "outtmpl": f"{DOWNLOADS_FOLDER}/%(id)s.%(ext)s",
-        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best",
+        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best",
         "overwrites": True,
         "quiet": True,
         "no_warnings": True,
+        # Use multiple clients - iOS works best for bypassing bot detection
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["ios", "android", "web"],
+                "player_skip": ["webpage", "configs", "js"],
             }
         },
+        # Browser-like headers
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
         },
-        "retries": 5,
-        "fragment_retries": 5,
+        "retries": 10,
+        "fragment_retries": 10,
+        # Additional bypass options
+        "sleep_interval": 1,
+        "max_sleep_interval": 3,
+        "ignoreerrors": False,
+        "no_check_certificate": True,
+        # Cookies (empty but helps sometimes)
+        "cookiefile": None,
     }
     
     try:
@@ -147,9 +161,16 @@ def _download_video(url: str, task_id: str = None):
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Download error: {error_msg}")
+        
+        # Provide helpful error messages in Arabic
         if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
-            raise HTTPException(status_code=500, detail="يوتيوب يطلب التحقق. جرب فيديو آخر.")
-        raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
+            raise HTTPException(status_code=500, detail="يوتيوب يمنع التحميل من السيرفر. جرب فيديو أقصر أو أقدم.")
+        elif "Video unavailable" in error_msg:
+            raise HTTPException(status_code=500, detail="هذا الفيديو غير متاح أو خاص.")
+        elif "age" in error_msg.lower():
+            raise HTTPException(status_code=500, detail="هذا الفيديو يتطلب تسجيل دخول (محتوى للكبار).")
+        else:
+            raise HTTPException(status_code=500, detail=f"فشل تحميل الفيديو: {error_msg[:100]}")
 
 # ============= LAZY LOADING FUNCTIONS =============
 def load_whisper_model():
