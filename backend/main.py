@@ -8,12 +8,13 @@ OPTIMIZED FOR RENDER FREE TIER:
 - Proper health check endpoint
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Literal
+import shutil
 import uvicorn
 import yt_dlp
 import os
@@ -617,6 +618,289 @@ def download_file(task_id: str, file_type: Literal["video", "audio", "srt"]):
         )
     else:
         raise HTTPException(status_code=404, detail=f"الملف '{file_type}' غير متوفر")
+
+# ============= DIRECT VIDEO UPLOAD ENDPOINT =============
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB max
+
+@app.post("/upload", response_model=TaskResponse)
+async def upload_video(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    mode: str = Form(default="DUBBING"),
+    target_lang: str = Form(default="ar")
+):
+    """
+    Upload video file directly for processing (bypasses YouTube restrictions).
+    Supported formats: MP4, MKV, WebM, MOV, AVI
+    Max file size: 500MB
+    """
+    task_id = str(uuid.uuid4())
+    
+    # Validate file type
+    allowed_extensions = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v']
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"❌ نوع الملف غير مدعوم. الأنواع المدعومة: {', '.join(allowed_extensions)}"
+        )
+    
+    # Validate mode
+    if mode not in ["DUBBING", "SUBTITLES", "BOTH"]:
+        mode = "DUBBING"
+    
+    # Save uploaded file
+    upload_filename = f"{task_id}{file_ext}"
+    upload_path = os.path.join(UPLOAD_FOLDER, upload_filename)
+    
+    try:
+        # Stream file to disk (memory efficient)
+        with open(upload_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                buffer.write(chunk)
+        
+        # Check file size
+        file_size = os.path.getsize(upload_path)
+        if file_size > MAX_FILE_SIZE:
+            os.remove(upload_path)
+            raise HTTPException(
+                status_code=400,
+                detail=f"❌ حجم الملف كبير جداً. الحد الأقصى: 500MB"
+            )
+        
+        print(f"📤 File uploaded: {upload_filename} ({file_size / 1024 / 1024:.1f} MB)")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"❌ فشل رفع الملف: {str(e)}")
+    
+    # Initialize task
+    tasks[task_id] = {
+        "task_id": task_id,
+        "status": TaskStatus.PENDING,
+        "progress": 0,
+        "message": "تم استلام الفيديو، جاري بدء المعالجة...",
+        "stage": "PENDING",
+        "source": "upload",
+        "filename": file.filename,
+        "mode": mode,
+        "target_lang": target_lang,
+        "created_at": datetime.now().isoformat(),
+        "result": None
+    }
+    
+    print(f"🚀 New UPLOAD task: {task_id} - Mode: {mode}")
+    
+    # Start background processing
+    background_tasks.add_task(process_uploaded_video_task, task_id, upload_path, mode, target_lang, file.filename)
+    
+    return TaskResponse(
+        task_id=task_id,
+        status=TaskStatus.PENDING,
+        progress=0,
+        message="تم رفع الفيديو بنجاح، جاري المعالجة...",
+        stage="PENDING"
+    )
+
+async def process_uploaded_video_task(task_id: str, video_path: str, mode: str, target_lang: str, original_filename: str):
+    """Background task for processing UPLOADED video (no YouTube download needed)"""
+    try:
+        print(f"📹 Processing uploaded video: {task_id[:8]}...")
+        
+        # Skip download - video already uploaded!
+        update_task(task_id, TaskStatus.DOWNLOADING, 15, "✅ تم استلام الفيديو", "DOWNLOAD")
+        
+        title = original_filename or "Uploaded Video"
+        thumbnail = ""
+        
+        # STEP 2: Extract Audio
+        update_task(task_id, TaskStatus.TRANSCRIBING, 20, "جاري استخراج الصوت...", "TRANSCRIPTION")
+        from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+        import moviepy.audio.fx.all as afx
+        
+        base_name = os.path.basename(video_path).split('.')[0]
+        audio_path = os.path.join(AUDIO_FOLDER, f"{base_name}.mp3")
+        
+        clip = VideoFileClip(video_path)
+        if clip.audio is None:
+            raise ValueError("لا يوجد صوت في هذا الفيديو")
+        clip.audio.write_audiofile(audio_path, verbose=False, logger=None)
+        clip.close()
+        
+        # STEP 3: Transcribe
+        update_task(task_id, TaskStatus.TRANSCRIBING, 25, "تحليل الصوت باستخدام Whisper AI...", "TRANSCRIPTION")
+        whisper_model = load_whisper_model()
+        
+        segments_gen, info = whisper_model.transcribe(audio_path, beam_size=5, language=None)
+        
+        segments = []
+        full_text = ""
+        for segment in segments_gen:
+            segments.append({
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text
+            })
+            full_text += segment.text + " "
+        
+        detected_lang = info.language
+        update_task(task_id, TaskStatus.TRANSCRIBING, 45, f"تم استخراج النص (اللغة: {detected_lang}) ✓", "TRANSCRIPTION")
+        
+        del whisper_model
+        
+        result = {
+            "title": title,
+            "thumbnail": thumbnail,
+            "original_text": full_text[:500] + "..." if len(full_text) > 500 else full_text,
+            "video_path": video_path,
+            "detected_language": detected_lang
+        }
+        
+        # STEP 4: Process based on mode
+        
+        # --- SUBTITLES MODE ---
+        if mode in ["SUBTITLES", "BOTH"]:
+            update_task(task_id, TaskStatus.GENERATING_SUBTITLES, 50, "إنشاء ملف الترجمة...", "SUBTITLE_GENERATION")
+            
+            translator = load_argos_translator()
+            
+            srt_content = ""
+            for i, segment in enumerate(segments, 1):
+                start_time = segment['start']
+                end_time = segment['end']
+                text = segment['text'].strip()
+                
+                if not text:
+                    continue
+                
+                translated_text = translate_text_lazy(text, translator, "en", target_lang)
+                
+                def format_time(seconds):
+                    hours = int(seconds // 3600)
+                    minutes = int((seconds % 3600) // 60)
+                    secs = int(seconds % 60)
+                    millis = int((seconds - int(seconds)) * 1000)
+                    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+                
+                srt_content += f"{i}\n"
+                srt_content += f"{format_time(start_time)} --> {format_time(end_time)}\n"
+                srt_content += f"{translated_text}\n\n"
+            
+            srt_filename = f"{base_name}_{target_lang}.srt"
+            srt_path = os.path.join(OUTPUT_FOLDER, srt_filename)
+            
+            with open(srt_path, 'w', encoding='utf-8') as f:
+                f.write(srt_content)
+            
+            result["srt_path"] = srt_path
+            result["srt_url"] = f"/output/{srt_filename}"
+            update_task(task_id, TaskStatus.GENERATING_SUBTITLES, 60, "تم إنشاء ملف الترجمة ✓", "SUBTITLE_GENERATION")
+        
+        # --- DUBBING MODE ---
+        if mode in ["DUBBING", "BOTH"]:
+            update_task(task_id, TaskStatus.TRANSLATING, 55, "ترجمة النص إلى العربية...", "TRANSLATION")
+            
+            try:
+                translator
+            except NameError:
+                translator = load_argos_translator()
+            
+            audio_clips = []
+            translated_texts = []
+            total_segments = len(segments)
+            
+            tts_voice = "ar-EG-SalmaNeural"
+            
+            for i, segment in enumerate(segments):
+                start_time = segment['start']
+                end_time = segment['end']
+                original_text = segment['text'].strip()
+                
+                if not original_text:
+                    continue
+                
+                translated_text = translate_text_lazy(original_text, translator, detected_lang or "en", target_lang)
+                translated_texts.append(translated_text)
+                
+                update_task(task_id, TaskStatus.GENERATING_AUDIO, 
+                           60 + int((i / total_segments) * 25), 
+                           f"توليد الدبلجة الصوتية ({i+1}/{total_segments})...", 
+                           "VOICE_GENERATION")
+                
+                try:
+                    segment_audio_name = f"seg_{task_id[:8]}_{i}.mp3"
+                    segment_audio_path = os.path.join(AUDIO_FOLDER, segment_audio_name)
+                    
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    asyncio.get_event_loop().run_until_complete(
+                        generate_tts_lazy(translated_text, segment_audio_path, tts_voice)
+                    )
+                    
+                    audio_clip = AudioFileClip(segment_audio_path)
+                    
+                    segment_duration = end_time - start_time
+                    current_duration = audio_clip.duration
+                    
+                    if current_duration > segment_duration and segment_duration > 0:
+                        speed_factor = min(current_duration / segment_duration, 1.8)
+                        audio_clip = audio_clip.fx(afx.speedx, speed_factor)
+                    
+                    audio_clip = audio_clip.set_start(start_time)
+                    audio_clips.append(audio_clip)
+                    
+                except Exception as e:
+                    print(f"⚠️ TTS error for segment {i}: {e}")
+                    continue
+            
+            # Merge
+            if audio_clips:
+                update_task(task_id, TaskStatus.MERGING, 88, "دمج ومزامنة الصوت مع الفيديو...", "SYNCING")
+                
+                original_video = VideoFileClip(video_path)
+                final_audio = CompositeAudioClip(audio_clips)
+                final_audio = final_audio.set_duration(original_video.duration)
+                final_video = original_video.set_audio(final_audio)
+                
+                output_filename = f"dubbed_{base_name}.mp4"
+                output_video_path = os.path.join(OUTPUT_FOLDER, output_filename)
+                
+                final_video.write_videofile(
+                    output_video_path, 
+                    codec="libx264", 
+                    audio_codec="aac",
+                    verbose=False, 
+                    logger=None,
+                    threads=2
+                )
+                
+                original_video.close()
+                final_audio.close()
+                
+                result["dubbed_video_path"] = output_video_path
+                result["dubbed_video_url"] = f"/output/{output_filename}"
+                result["translated_text"] = " ".join(translated_texts[:10]) + "..." if len(translated_texts) > 10 else " ".join(translated_texts)
+                
+                update_task(task_id, TaskStatus.MERGING, 95, "تم دمج الصوت مع الفيديو ✓", "SYNCING")
+        
+        # COMPLETE
+        update_task(task_id, TaskStatus.COMPLETED, 100, "تمت العملية بنجاح! 🎉", "FINALIZING", result)
+        print(f"✅ Upload task completed: {task_id[:8]}")
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        error_msg = f"فشلت العملية: {str(e)}"
+        update_task(task_id, TaskStatus.FAILED, 0, error_msg, "FAILED")
+        print(f"❌ Upload task failed: {task_id[:8]} - {error_msg}")
 
 # ============= Legacy Endpoints =============
 @app.post("/translate")
