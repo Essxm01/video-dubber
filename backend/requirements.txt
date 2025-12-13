@@ -1,3 +1,8 @@
+# ============================================
+# Arab Dubbing API - Requirements v3.1
+# Optimized for Render Free Tier (512MB RAM)
+# ============================================
+
 # Core Framework
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
@@ -5,32 +10,30 @@ gunicorn==21.2.0
 
 # Video Processing
 yt-dlp>=2024.12.6
-moviepy==1.0.3
-ffmpeg-python==0.2.0
 
-# AI/ML - Speech Processing (SOTA - faster-whisper)
+# AI/ML - Speech Processing (tiny model for memory)
 faster-whisper==1.0.3
 ctranslate2>=4.0.0
 
-# Translation (Neural MT - Offline)
+# Translation (Offline Neural MT)
 argostranslate==1.9.6
 
-# Text-to-Speech (Neural Arabic voices)
+# Text-to-Speech
 edge-tts==6.1.10
 
 # HTTP & Multipart
 python-multipart==0.0.9
-httpx==0.24.1
+httpx>=0.25.0
 aiofiles==23.2.1
 
-# Supabase
-supabase==2.3.0
+# Supabase (latest stable)
+supabase>=2.0.0
 
 # Environment
 python-dotenv==1.0.1
 
 # Utilities
-pydantic==2.6.0
+pydantic>=2.0.0
 
 # Async support
 nest-asyncio==1.6.0
