@@ -1,6 +1,6 @@
 # ============================================
-# Arab Dubbing API - Requirements v3.1
-# Optimized for Render Free Tier (512MB RAM)
+# Arab Dubbing API - Requirements v4.0
+# Using Groq API for Whisper (no local ML)
 # ============================================
 
 # Core Framework
@@ -11,29 +11,28 @@ gunicorn==21.2.0
 # Video Processing
 yt-dlp>=2024.12.6
 
-# AI/ML - Speech Processing (tiny model for memory)
-faster-whisper==1.0.3
-ctranslate2>=4.0.0
+# Groq API (Cloud Whisper - FAST!)
+groq>=0.4.0
 
 # Translation (Offline Neural MT)
 argostranslate==1.9.6
 
 # Text-to-Speech
-edge-tts==6.1.10
+edge-tts>=6.1.10
 
 # HTTP & Multipart
 python-multipart==0.0.9
 httpx>=0.25.0
-aiofiles==23.2.1
+aiofiles>=23.2.1
 
-# Supabase (latest stable)
+# Supabase
 supabase>=2.0.0
 
 # Environment
-python-dotenv==1.0.1
+python-dotenv>=1.0.0
 
 # Utilities
 pydantic>=2.0.0
 
 # Async support
-nest-asyncio==1.6.0
+nest-asyncio>=1.6.0
