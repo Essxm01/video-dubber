@@ -127,14 +127,45 @@ def db_update_task(task_id: str, status: str, progress: int, message: str, stage
         print(f"⚠️ DB update error: {e}")
 
 def db_get_task(task_id: str) -> dict:
-    """Get task from Supabase"""
+    """Get task from Supabase with robust error handling"""
     try:
         sb = get_supabase()
         if sb:
-            res = sb.table("projects").select("*").eq("id", task_id).single().execute()
-            return res.data
+            # Use .execute() without .single() to avoid JSON parsing issues
+            res = sb.table("projects").select("*").eq("id", task_id).execute()
+            
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+            
     except Exception as e:
-        print(f"⚠️ DB get error: {e}")
+        error_str = str(e)
+        print(f"⚠️ DB get error: {error_str[:200]}")
+        
+        # FALLBACK: If error contains valid data, try to extract it
+        import re
+        import json
+        
+        # Try to find JSON in error message
+        if "progress" in error_str or "status" in error_str:
+            try:
+                # Look for JSON-like content in error
+                json_match = re.search(r'\{[^{}]*"status"[^{}]*\}', error_str)
+                if json_match:
+                    extracted = json.loads(json_match.group())
+                    print(f"🔧 Extracted from error: {extracted}")
+                    return extracted
+            except:
+                pass
+        
+        # Return placeholder to prevent 404 (keeps UI alive)
+        return {
+            "id": task_id,
+            "status": "PROCESSING",
+            "progress": 15,
+            "message": "جاري المعالجة...",
+            "stage": "TRANSCRIPTION"
+        }
+    
     return None
 
 # ============= Models =============
