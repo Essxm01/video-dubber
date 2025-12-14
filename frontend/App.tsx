@@ -13,6 +13,7 @@ import { ContactPage } from './components/ContactPage';
 import { MarketingSections } from './components/MarketingSections';
 import { MyVideosPage } from './components/MyVideosPage';
 import { SettingsPage } from './components/SettingsPage';
+import { MainInterface } from './components/MainInterface';
 import { startRealProcessing, checkBackendHealth, BACKEND_URL, uploadVideo, getTaskStatus } from './services/apiService';
 import { generateVideoInsights } from './services/geminiService';
 import { useAuth } from './contexts/AuthContext';
@@ -382,182 +383,27 @@ function App() {
       default:
         return (
           <>
-            {/* State 1: IDLE / INPUT */}
+            {/* State 1: IDLE / INPUT - NEW UNIFIED INTERFACE */}
             {state === ProcessingState.IDLE || state === ProcessingState.VALIDATING ? (
               <div className="w-full space-y-16 animate-in fade-in zoom-in duration-500">
 
-                {/* Backend Status Indicator */}
-                {backendOnline === false && (
-                  <div className="max-w-md mx-auto bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-xl p-4 flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-600" />
-                    <span className="text-amber-700 dark:text-amber-400 text-sm">
-                      {lang === 'ar' ? 'الخادم قد يكون غير متصل. جرب لاحقاً.' : 'Server may be offline.'}
-                    </span>
-                  </div>
-                )}
-
-                {/* HERO SECTION */}
-                <div className="max-w-4xl mx-auto text-center space-y-8">
-                  <div className="space-y-6">
-                    <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-sm font-bold shadow-sm">
-                      <Sparkles className="w-4 h-4 ltr:mr-2 rtl:ml-2" />
-                      {t.heroBadge}
-                    </div>
-                    <h1 className="text-5xl md:text-7xl font-black leading-tight text-slate-900 dark:text-white tracking-tight">
-                      {t.heroTitle} <br />
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 animate-gradient-x">
-                        {t.heroHighlight}
-                      </span>
-                    </h1>
-                    <p className="text-xl md:text-2xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed font-light">
-                      {t.heroDesc}
-                    </p>
-                  </div>
-
-                  <div className="mt-10 max-w-2xl mx-auto space-y-6">
-                    {/* URL Input */}
-                    <div className="relative group">
-                      <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-2xl blur-lg opacity-30 group-hover:opacity-50 transition duration-1000"></div>
-                      <div className="relative bg-white dark:bg-slate-900 rounded-2xl p-2 flex items-center shadow-2xl border border-slate-200 dark:border-slate-800">
-                        <div className="pl-5 pr-3 text-slate-400">
-                          <Youtube className="w-7 h-7" />
-                        </div>
-                        <input
-                          type="text"
-                          placeholder={t.placeholder}
-                          className="flex-grow bg-transparent border-none text-slate-900 dark:text-white placeholder-slate-400 focus:ring-0 text-lg py-4 font-medium outline-none"
-                          value={url}
-                          onChange={handleInputChange}
-                          dir="ltr"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Mode Selection Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <button
-                        onClick={() => setMode('DUBBING')}
-                        className={`p-4 rounded-xl border-2 text-start transition-all duration-200 flex flex-col gap-2 ${mode === 'DUBBING' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 ring-2 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-300'}`}
-                      >
-                        <div className={`p-2 rounded-lg w-fit ${mode === 'DUBBING' ? 'bg-indigo-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'}`}>
-                          <Mic className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">{t.modeDubbing}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t.modeDubbingDesc}</div>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => setMode('SUBTITLES')}
-                        className={`p-4 rounded-xl border-2 text-start transition-all duration-200 flex flex-col gap-2 ${mode === 'SUBTITLES' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 ring-2 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-300'}`}
-                      >
-                        <div className={`p-2 rounded-lg w-fit ${mode === 'SUBTITLES' ? 'bg-indigo-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'}`}>
-                          <FileText className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">{t.modeSubtitles}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t.modeSubtitlesDesc}</div>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => setMode('BOTH')}
-                        className={`p-4 rounded-xl border-2 text-start transition-all duration-200 flex flex-col gap-2 ${mode === 'BOTH' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 ring-2 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-300'}`}
-                      >
-                        <div className={`p-2 rounded-lg w-fit ${mode === 'BOTH' ? 'bg-indigo-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'}`}>
-                          <Layers className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">{t.modeBoth}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t.modeBothDesc}</div>
-                        </div>
-                      </button>
-                    </div>
-
-                    <Button
-                      onClick={handleStart}
-                      isLoading={state === ProcessingState.VALIDATING}
-                      className="w-full h-14 text-xl shadow-xl shadow-indigo-500/20"
-                      disabled={!url.trim()}
-                    >
-                      {t.startBtn}
-                    </Button>
-
-                    {/* OR Divider */}
-                    <div className="flex items-center gap-4 my-2">
-                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
-                      <span className="text-sm text-slate-400 font-bold">{lang === 'ar' ? 'أو' : 'OR'}</span>
-                      <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700"></div>
-                    </div>
-
-                    {/* Direct Video Upload */}
-                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border-2 border-dashed border-emerald-300 dark:border-emerald-600 rounded-xl p-6 text-center space-y-4">
-                      <div className="flex justify-center">
-                        <div className="p-3 bg-emerald-100 dark:bg-emerald-800 rounded-full">
-                          <Upload className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
-                        </div>
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-slate-900 dark:text-white text-lg">
-                          {lang === 'ar' ? '📤 رفع فيديو مباشرة' : '📤 Upload Video Directly'}
-                        </h3>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                          {lang === 'ar' ? 'تجاوز قيود يوتيوب - ارفع ملف من جهازك' : 'Bypass YouTube restrictions - upload from your device'}
-                        </p>
-                      </div>
-
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="video/mp4,video/webm,video/mkv,video/mov,video/avi,.mp4,.webm,.mkv,.mov,.avi"
-                        onChange={handleFileChange}
-                        className="hidden"
-                        id="video-upload"
-                      />
-
-                      {uploadedFile ? (
-                        <div className="space-y-3">
-                          <div className="bg-white dark:bg-slate-800 rounded-lg p-3 flex items-center gap-3 border border-emerald-200 dark:border-emerald-700">
-                            <div className="p-2 bg-emerald-100 dark:bg-emerald-900 rounded-lg">
-                              <FileText className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                            </div>
-                            <div className="flex-1 text-start">
-                              <div className="font-medium text-slate-900 dark:text-white text-sm truncate">{uploadedFile.name}</div>
-                              <div className="text-xs text-slate-500">{(uploadedFile.size / 1024 / 1024).toFixed(1)} MB</div>
-                            </div>
-                          </div>
-                          <Button
-                            onClick={handleFileUpload}
-                            isLoading={state === ProcessingState.VALIDATING}
-                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            {lang === 'ar' ? '🚀 ابدأ دبلجة الفيديو' : '🚀 Start Dubbing'}
-                          </Button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="w-full py-3 px-4 bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-600 rounded-xl font-bold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors"
-                        >
-                          {lang === 'ar' ? '📁 اختر ملف فيديو (MP4, MKV, WebM)' : '📁 Choose Video File (MP4, MKV, WebM)'}
-                        </button>
-                      )}
-
-                      <p className="text-xs text-slate-400">
-                        {lang === 'ar' ? 'الحد الأقصى: 500MB • مدعوم: MP4, MKV, WebM, MOV, AVI' : 'Max: 500MB • Supported: MP4, MKV, WebM, MOV, AVI'}
-                      </p>
-                    </div>
-
-                  </div>
-
-                  {errorMsg && (
-                    <div className="flex items-center justify-center text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-400/10 border border-red-200 dark:border-transparent p-3 rounded-xl animate-pulse max-w-md mx-auto">
-                      <AlertCircle className="w-5 h-5 ltr:mr-2 rtl:ml-2" />
-                      {errorMsg}
-                    </div>
-                  )}
-                </div>
+                {/* MainInterface Component */}
+                <MainInterface
+                  onStartYouTube={(url, selectedMode) => {
+                    setUrl(url);
+                    setMode(selectedMode);
+                    handleStart();
+                  }}
+                  onStartUpload={(file, selectedMode) => {
+                    setUploadedFile(file);
+                    setMode(selectedMode);
+                    handleFileUpload();
+                  }}
+                  isLoading={state === ProcessingState.VALIDATING}
+                  error={errorMsg}
+                  lang={lang}
+                  backendOnline={backendOnline}
+                />
 
                 {/* MARKETING SECTIONS */}
                 <MarketingSections t={t} onStartClick={scrollToTop} />
