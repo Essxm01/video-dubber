@@ -1,23 +1,59 @@
 
 import { ProcessingStage, ServiceMode } from './types';
 
-// Base steps
-export const STEPS = [
-  { id: ProcessingStage.DOWNLOAD, label: 'download_video', icon: 'Download' },
+// Base steps - ALL possible steps
+export const ALL_STEPS = [
+  { id: ProcessingStage.DOWNLOAD, label: 'upload_video', icon: 'Upload' },
   { id: ProcessingStage.TRANSCRIPTION, label: 'analyze_audio', icon: 'FileAudio' },
   { id: ProcessingStage.TRANSLATION, label: 'translate_text', icon: 'Languages' },
-  { id: ProcessingStage.VOICE_GENERATION, label: 'generate_voice', icon: 'Mic' }, // Dubbing only
-  { id: ProcessingStage.SUBTITLE_GENERATION, label: 'generate_subs', icon: 'FileText' }, // Subs only
+  { id: ProcessingStage.SUBTITLE_GENERATION, label: 'generate_subs', icon: 'FileText' },
+  { id: ProcessingStage.VOICE_GENERATION, label: 'generate_voice', icon: 'Mic' },
   { id: ProcessingStage.SYNCING, label: 'sync_merge', icon: 'RefreshCw' },
+  { id: ProcessingStage.FINALIZING, label: 'complete', icon: 'CheckCircle' },
 ];
 
+// Legacy export for backwards compatibility
+export const STEPS = ALL_STEPS;
+
+/**
+ * Get steps based on selected mode
+ * SUBTITLES: Upload -> Transcribe -> Translate -> Generate SRT -> Complete
+ * DUBBING: Upload -> Transcribe -> Translate -> Generate Voice -> Merge -> Complete
+ * BOTH: Upload -> Transcribe -> Translate -> Generate SRT -> Generate Voice -> Merge -> Complete
+ */
 export const getStepsForMode = (mode: ServiceMode) => {
-  return STEPS.filter(step => {
-    if (mode === 'DUBBING' && step.id === ProcessingStage.SUBTITLE_GENERATION) return false;
-    if (mode === 'SUBTITLES' && step.id === ProcessingStage.VOICE_GENERATION) return false;
-    if (mode === 'SUBTITLES' && step.id === ProcessingStage.SYNCING) return true; // Syncing needed for burning subs
-    return true;
-  });
+  switch (mode) {
+    case 'SUBTITLES':
+      return [
+        { id: ProcessingStage.DOWNLOAD, label: 'upload_video', icon: 'Upload' },
+        { id: ProcessingStage.TRANSCRIPTION, label: 'analyze_audio', icon: 'FileAudio' },
+        { id: ProcessingStage.TRANSLATION, label: 'translate_text', icon: 'Languages' },
+        { id: ProcessingStage.SUBTITLE_GENERATION, label: 'generate_subs', icon: 'FileText' },
+        { id: ProcessingStage.FINALIZING, label: 'complete', icon: 'CheckCircle' },
+      ];
+
+    case 'DUBBING':
+      return [
+        { id: ProcessingStage.DOWNLOAD, label: 'upload_video', icon: 'Upload' },
+        { id: ProcessingStage.TRANSCRIPTION, label: 'analyze_audio', icon: 'FileAudio' },
+        { id: ProcessingStage.TRANSLATION, label: 'translate_text', icon: 'Languages' },
+        { id: ProcessingStage.VOICE_GENERATION, label: 'generate_voice', icon: 'Mic' },
+        { id: ProcessingStage.SYNCING, label: 'sync_merge', icon: 'RefreshCw' },
+        { id: ProcessingStage.FINALIZING, label: 'complete', icon: 'CheckCircle' },
+      ];
+
+    case 'BOTH':
+    default:
+      return [
+        { id: ProcessingStage.DOWNLOAD, label: 'upload_video', icon: 'Upload' },
+        { id: ProcessingStage.TRANSCRIPTION, label: 'analyze_audio', icon: 'FileAudio' },
+        { id: ProcessingStage.TRANSLATION, label: 'translate_text', icon: 'Languages' },
+        { id: ProcessingStage.SUBTITLE_GENERATION, label: 'generate_subs', icon: 'FileText' },
+        { id: ProcessingStage.VOICE_GENERATION, label: 'generate_voice', icon: 'Mic' },
+        { id: ProcessingStage.SYNCING, label: 'sync_merge', icon: 'RefreshCw' },
+        { id: ProcessingStage.FINALIZING, label: 'complete', icon: 'CheckCircle' },
+      ];
+  }
 };
 
 export const MOCK_YOUTUBE_THUMBNAIL = "https://picsum.photos/800/450";

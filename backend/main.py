@@ -1,13 +1,13 @@
 """
-Arab Dubbing API - Production Version v4.0
+Arab Dubbing API - Production Version v5.0
 AI-powered video dubbing and translation platform
 
-CLOUD-BASED ARCHITECTURE:
+FEATURES:
 - Groq API for Whisper transcription (whisper-large-v3)
-- Supabase for task persistence
+- Supabase Storage for video/subtitle hosting
+- Conditional processing based on mode (TRANSLATION/DUBBING/BOTH)
 - Edge-TTS for Arabic speech synthesis
 - Argos Translate for translation
-- FFmpeg for audio/video processing
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -24,7 +24,6 @@ import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 # Configuration
@@ -32,13 +31,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-app = FastAPI(
-    title="Arab Dubbing API",
-    description="AI-powered video dubbing - دبلجة العرب",
-    version="4.0.0"
-)
+app = FastAPI(title="Arab Dubbing API", version="5.0.0")
 
-# ============= CORS =============
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -55,11 +50,11 @@ UPLOAD_FOLDER = "uploads"
 for folder in [AUDIO_FOLDER, OUTPUT_FOLDER, UPLOAD_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
-# Mount static files
 app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
-# ============= Supabase Client =============
+# ============= Clients =============
 _supabase = None
+_groq = None
 
 def get_supabase():
     global _supabase
@@ -67,13 +62,9 @@ def get_supabase():
         try:
             from supabase import create_client
             _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-            print("✅ Supabase connected")
         except Exception as e:
-            print(f"⚠️ Supabase error: {e}")
+            print(f"⚠️ Supabase: {e}")
     return _supabase
-
-# ============= Groq Client =============
-_groq = None
 
 def get_groq():
     global _groq
@@ -81,19 +72,20 @@ def get_groq():
         try:
             from groq import Groq
             _groq = Groq(api_key=GROQ_API_KEY)
-            print("✅ Groq client ready")
         except Exception as e:
-            print(f"⚠️ Groq error: {e}")
+            print(f"⚠️ Groq: {e}")
     return _groq
 
 # ============= Task Status =============
-class TaskStatus:
+class Status:
     PENDING = "PENDING"
-    DOWNLOADING = "DOWNLOADING"
+    EXTRACTING = "EXTRACTING"
     TRANSCRIBING = "TRANSCRIBING"
     TRANSLATING = "TRANSLATING"
+    GENERATING_SRT = "GENERATING_SRT"
     GENERATING_AUDIO = "GENERATING_AUDIO"
     MERGING = "MERGING"
+    UPLOADING = "UPLOADING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
@@ -104,11 +96,10 @@ def db_create(task_id: str, filename: str, mode: str):
             sb.table("projects").insert({
                 "id": task_id,
                 "title": filename,
-                "status": TaskStatus.PENDING,
+                "status": Status.PENDING,
                 "progress": 0,
                 "message": "جاري البدء...",
                 "stage": "PENDING",
-                "source": "upload",
                 "mode": mode,
                 "created_at": datetime.now().isoformat(),
             }).execute()
@@ -145,6 +136,34 @@ def db_get(task_id: str) -> dict:
         return {"status": "PROCESSING", "progress": 10, "message": "جاري المعالجة..."}
     return None
 
+# ============= Storage Functions =============
+
+def upload_to_supabase_storage(file_path: str, bucket: str, dest_name: str, content_type: str) -> str:
+    """Upload file to Supabase Storage and return public URL"""
+    try:
+        sb = get_supabase()
+        if not sb:
+            raise Exception("Supabase not available")
+        
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        
+        # Upload to bucket
+        sb.storage.from_(bucket).upload(
+            path=dest_name,
+            file=file_data,
+            file_options={"content-type": content_type, "upsert": "true"}
+        )
+        
+        # Get public URL
+        public_url = sb.storage.from_(bucket).get_public_url(dest_name)
+        print(f"✅ Uploaded to Supabase: {dest_name}")
+        return public_url
+        
+    except Exception as e:
+        print(f"❌ Storage upload error: {e}")
+        return None
+
 # ============= Models =============
 class TaskResponse(BaseModel):
     task_id: str
@@ -157,37 +176,29 @@ class TaskResponse(BaseModel):
 # ============= Helper Functions =============
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
-    """Extract audio using ffmpeg"""
-    cmd = [
-        "ffmpeg", "-i", video_path,
-        "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000",
-        "-y", audio_path
-    ]
+    cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=300)
         return True
-    except Exception as e:
-        print(f"❌ Extract audio: {e}")
+    except:
         return False
 
-def transcribe_with_groq(audio_path: str) -> tuple:
-    """Transcribe audio using Groq API (whisper-large-v3)"""
+def transcribe_groq(audio_path: str) -> tuple:
+    """Transcribe using Groq API"""
     try:
         client = get_groq()
         if not client:
-            raise Exception("Groq client not available")
+            raise Exception("Groq not available")
         
-        with open(audio_path, "rb") as audio_file:
+        with open(audio_path, "rb") as f:
             transcription = client.audio.transcriptions.create(
-                file=(os.path.basename(audio_path), audio_file.read()),
+                file=(os.path.basename(audio_path), f.read()),
                 model="whisper-large-v3",
-                response_format="verbose_json",
-                language="en"  # Auto-detect would be: None
+                response_format="verbose_json"
             )
         
-        # Extract segments with timestamps
         segments = []
-        detected_lang = "en"
+        lang = "en"
         
         if hasattr(transcription, 'segments') and transcription.segments:
             for seg in transcription.segments:
@@ -196,24 +207,16 @@ def transcribe_with_groq(audio_path: str) -> tuple:
                     "end": seg.get("end", 0),
                     "text": seg.get("text", "").strip()
                 })
-            detected_lang = getattr(transcription, 'language', 'en') or 'en'
+            lang = getattr(transcription, 'language', 'en') or 'en'
         elif hasattr(transcription, 'text'):
-            # Fallback: single segment
-            segments.append({
-                "start": 0,
-                "end": 60,
-                "text": transcription.text.strip()
-            })
+            segments.append({"start": 0, "end": 60, "text": transcription.text.strip()})
         
-        print(f"✅ Groq transcribed: {len(segments)} segments, lang={detected_lang}")
-        return segments, detected_lang
-        
+        return segments, lang
     except Exception as e:
-        print(f"❌ Groq transcription error: {e}")
+        print(f"❌ Groq: {e}")
         raise
 
 def translate_text(text: str, src: str = "en", tgt: str = "ar") -> str:
-    """Translate using argostranslate"""
     if not text.strip():
         return text
     try:
@@ -222,24 +225,19 @@ def translate_text(text: str, src: str = "en", tgt: str = "ar") -> str:
     except:
         return text
 
-async def generate_tts(text: str, output_path: str, voice: str = "ar-EG-SalmaNeural"):
-    """Generate TTS using edge-tts"""
+async def tts_edge(text: str, path: str, voice: str = "ar-EG-SalmaNeural"):
     import edge_tts
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    c = edge_tts.Communicate(text, voice)
+    await c.save(path)
 
-def merge_audio_ffmpeg(audio_files: list, output: str) -> bool:
-    """Merge audio files"""
-    if not audio_files:
+def merge_audio(files: list, output: str) -> bool:
+    if not files:
         return False
-    
     list_file = os.path.join(AUDIO_FOLDER, "merge.txt")
     with open(list_file, "w") as f:
-        for a in audio_files:
+        for a in files:
             f.write(f"file '{os.path.abspath(a)}'\n")
-    
     cmd = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", output]
-    
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         os.remove(list_file)
@@ -247,102 +245,116 @@ def merge_audio_ffmpeg(audio_files: list, output: str) -> bool:
     except:
         return False
 
-def combine_video_audio(video_path: str, audio_path: str, output_path: str) -> bool:
-    """Combine video with new audio"""
-    cmd = [
-        "ffmpeg", "-i", video_path, "-i", audio_path,
-        "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0",
-        "-shortest", "-y", output_path
-    ]
+def combine_video_audio(video: str, audio: str, output: str) -> bool:
+    cmd = ["ffmpeg", "-i", video, "-i", audio, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-y", output]
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=600)
         return True
-    except Exception as e:
-        print(f"❌ Combine: {e}")
+    except:
         return False
+
+def generate_srt(segments: list, lang: str, tgt: str) -> str:
+    """Generate SRT content from segments"""
+    srt = ""
+    for i, seg in enumerate(segments, 1):
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        
+        translated = translate_text(text, lang, tgt)
+        
+        def fmt(s):
+            h, m = int(s // 3600), int((s % 3600) // 60)
+            sec, ms = int(s % 60), int((s - int(s)) * 1000)
+            return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+        
+        srt += f"{i}\n{fmt(seg['start'])} --> {fmt(seg['end'])}\n{translated}\n\n"
+    
+    return srt
 
 # ============= API Endpoints =============
 
 @app.get("/")
 def root():
-    return {"status": "active", "version": "4.0.0", "whisper": "Groq Cloud"}
+    return {"status": "active", "version": "5.0.0"}
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {"status": "healthy"}
 
-# ============= Upload Endpoint =============
-MAX_SIZE = 25 * 1024 * 1024  # 25MB (Groq limit)
+MAX_SIZE = 25 * 1024 * 1024  # 25MB
 
 @app.post("/upload", response_model=TaskResponse)
-async def upload_video(
+async def upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     mode: str = Form(default="DUBBING"),
     target_lang: str = Form(default="ar")
 ):
-    """Upload video for processing"""
     task_id = str(uuid.uuid4())
     
     ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v']:
+    if ext not in ['.mp4', '.mkv', '.webm', '.mov', '.avi']:
         raise HTTPException(400, "نوع الملف غير مدعوم")
     
+    # Validate mode
+    if mode not in ["DUBBING", "SUBTITLES", "BOTH"]:
+        mode = "DUBBING"
+    
     path = os.path.join(UPLOAD_FOLDER, f"{task_id}{ext}")
-    try:
-        with open(path, "wb") as f:
-            while chunk := await file.read(1024 * 1024):
-                f.write(chunk)
-        
-        size = os.path.getsize(path)
-        if size > MAX_SIZE:
-            os.remove(path)
-            raise HTTPException(400, f"حجم الملف كبير (الحد {MAX_SIZE//1024//1024}MB)")
-        
-        print(f"📤 Uploaded: {file.filename} ({size/1024/1024:.1f}MB)")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"فشل الرفع: {e}")
+    with open(path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    
+    size = os.path.getsize(path)
+    if size > MAX_SIZE:
+        os.remove(path)
+        raise HTTPException(400, f"الحد الأقصى {MAX_SIZE//1024//1024}MB")
     
     db_create(task_id, file.filename, mode)
     background_tasks.add_task(process_video, task_id, path, mode, target_lang, file.filename)
     
-    return TaskResponse(
-        task_id=task_id,
-        status=TaskStatus.PENDING,
-        progress=0,
-        message="تم رفع الفيديو، جاري المعالجة...",
-        stage="PENDING"
-    )
+    return TaskResponse(task_id=task_id, status=Status.PENDING, progress=0, message="جاري المعالجة...", stage="PENDING")
 
-# ============= Processing =============
+# ============= MAIN PROCESSING (Conditional Logic) =============
 
 async def process_video(task_id: str, video_path: str, mode: str, target_lang: str, filename: str):
-    """Main processing pipeline using Groq API"""
+    """
+    CONDITIONAL PROCESSING PIPELINE:
+    
+    ALWAYS: Extract Audio -> Transcribe (Groq) -> Translate Text
+    
+    IF mode == SUBTITLES or BOTH:
+        -> Generate SRT -> Upload SRT to Supabase
+    
+    IF mode == DUBBING or BOTH:
+        -> Generate TTS -> Merge Audio -> Upload Video to Supabase
+    """
     try:
-        print(f"🎬 Processing: {task_id[:8]}")
-        
+        print(f"🎬 Processing [{mode}]: {task_id[:8]}")
         base = task_id[:8]
         audio_path = os.path.join(AUDIO_FOLDER, f"{base}.mp3")
+        result = {"title": filename, "mode": mode}
         
-        # STEP 1: Extract Audio
-        db_update(task_id, TaskStatus.DOWNLOADING, 10, "استخراج الصوت...", "DOWNLOAD")
+        # ========== STEP 1: Extract Audio (ALWAYS) ==========
+        db_update(task_id, Status.EXTRACTING, 10, "استخراج الصوت...", "EXTRACTING")
         
         if not extract_audio(video_path, audio_path):
             raise Exception("فشل استخراج الصوت")
         
-        # STEP 2: Transcribe with Groq
-        db_update(task_id, TaskStatus.TRANSCRIBING, 20, "تحليل الصوت (Groq AI)...", "TRANSCRIPTION")
+        # ========== STEP 2: Transcribe with Groq (ALWAYS) ==========
+        db_update(task_id, Status.TRANSCRIBING, 25, "تحليل الصوت (Groq AI)...", "TRANSCRIBING")
         
-        segments, detected_lang = transcribe_with_groq(audio_path)
+        segments, detected_lang = transcribe_groq(audio_path)
+        result["detected_language"] = detected_lang
+        result["segments_count"] = len(segments)
         
-        db_update(task_id, TaskStatus.TRANSCRIBING, 40, f"تم استخراج {len(segments)} جملة ✓", "TRANSCRIPTION")
-        
-        result = {"title": filename, "detected_language": detected_lang}
+        db_update(task_id, Status.TRANSCRIBING, 40, f"تم استخراج {len(segments)} جملة ✓", "TRANSCRIBING")
         gc.collect()
         
-        # STEP 3: Setup translation
+        # ========== STEP 3: Setup Translation (ALWAYS) ==========
+        db_update(task_id, Status.TRANSLATING, 45, "تجهيز الترجمة...", "TRANSLATING")
+        
         try:
             import argostranslate.package
             argostranslate.package.update_package_index()
@@ -355,9 +367,36 @@ async def process_video(task_id: str, video_path: str, mode: str, target_lang: s
         except Exception as e:
             print(f"Argos: {e}")
         
-        # STEP 4: Generate TTS
+        # ========== STEP 4: CONDITIONAL - Generate Subtitles ==========
+        if mode in ["SUBTITLES", "BOTH"]:
+            db_update(task_id, Status.GENERATING_SRT, 50, "إنشاء ملف الترجمة...", "GENERATING_SRT")
+            
+            srt_content = generate_srt(segments, detected_lang, target_lang)
+            
+            # Save locally first
+            srt_filename = f"{base}_{target_lang}.srt"
+            srt_local = os.path.join(OUTPUT_FOLDER, srt_filename)
+            with open(srt_local, "w", encoding="utf-8") as f:
+                f.write(srt_content)
+            
+            # Upload to Supabase Storage
+            srt_url = upload_to_supabase_storage(
+                srt_local, 
+                "videos", 
+                f"subtitles/{srt_filename}",
+                "text/plain; charset=utf-8"
+            )
+            
+            if srt_url:
+                result["srt_url"] = srt_url
+            else:
+                result["srt_url"] = f"/output/{srt_filename}"  # Fallback to local
+            
+            db_update(task_id, Status.GENERATING_SRT, 55, "تم إنشاء ملف الترجمة ✓", "GENERATING_SRT")
+        
+        # ========== STEP 5: CONDITIONAL - Generate Dubbed Audio ==========
         if mode in ["DUBBING", "BOTH"]:
-            db_update(task_id, TaskStatus.GENERATING_AUDIO, 45, "ترجمة وتوليد الصوت...", "VOICE")
+            db_update(task_id, Status.GENERATING_AUDIO, 55, "توليد الدبلجة...", "GENERATING_AUDIO")
             
             import nest_asyncio
             nest_asyncio.apply()
@@ -371,33 +410,48 @@ async def process_video(task_id: str, video_path: str, mode: str, target_lang: s
                     continue
                 
                 if i % 3 == 0:
-                    prog = 45 + int((i / total) * 35)
-                    db_update(task_id, TaskStatus.GENERATING_AUDIO, prog, f"توليد الصوت {i+1}/{total}...", "VOICE")
+                    prog = 55 + int((i / total) * 25)
+                    db_update(task_id, Status.GENERATING_AUDIO, prog, f"توليد الصوت {i+1}/{total}...", "GENERATING_AUDIO")
                 
-                translated = translate_text(text, detected_lang or "en", target_lang)
-                
+                translated = translate_text(text, detected_lang, target_lang)
                 tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
+                
                 try:
-                    asyncio.get_event_loop().run_until_complete(generate_tts(translated, tts_path))
+                    asyncio.get_event_loop().run_until_complete(tts_edge(translated, tts_path))
                     tts_files.append(tts_path)
                 except Exception as e:
                     print(f"TTS {i}: {e}")
             
-            # STEP 5: Merge TTS
+            # ========== STEP 6: Merge Audio & Video ==========
             if tts_files:
-                db_update(task_id, TaskStatus.MERGING, 85, "دمج الصوت...", "MERGING")
+                db_update(task_id, Status.MERGING, 82, "دمج الصوت...", "MERGING")
                 
                 merged_audio = os.path.join(AUDIO_FOLDER, f"merged_{base}.mp3")
                 
-                if merge_audio_ffmpeg(tts_files, merged_audio):
-                    db_update(task_id, TaskStatus.MERGING, 90, "دمج مع الفيديو...", "MERGING")
+                if merge_audio(tts_files, merged_audio):
+                    db_update(task_id, Status.MERGING, 88, "دمج مع الفيديو...", "MERGING")
                     
                     output_name = f"dubbed_{base}.mp4"
-                    output_path = os.path.join(OUTPUT_FOLDER, output_name)
+                    output_local = os.path.join(OUTPUT_FOLDER, output_name)
                     
-                    if combine_video_audio(video_path, merged_audio, output_path):
-                        result["dubbed_video_url"] = f"/output/{output_name}"
-                        result["dubbed_video_path"] = output_path
+                    if combine_video_audio(video_path, merged_audio, output_local):
+                        
+                        # ========== STEP 7: Upload to Supabase Storage ==========
+                        db_update(task_id, Status.UPLOADING, 92, "رفع الفيديو...", "UPLOADING")
+                        
+                        video_url = upload_to_supabase_storage(
+                            output_local,
+                            "videos",
+                            f"dubbed/{output_name}",
+                            "video/mp4"
+                        )
+                        
+                        if video_url:
+                            result["dubbed_video_url"] = video_url
+                        else:
+                            result["dubbed_video_url"] = f"/output/{output_name}"  # Fallback
+                        
+                        result["dubbed_video_path"] = output_local
                     
                     # Cleanup
                     for f in tts_files:
@@ -408,43 +462,18 @@ async def process_video(task_id: str, video_path: str, mode: str, target_lang: s
             
             gc.collect()
         
-        # STEP 6: Subtitles
-        if mode in ["SUBTITLES", "BOTH"]:
-            srt = ""
-            for i, seg in enumerate(segments, 1):
-                text = seg.get("text", "").strip()
-                if not text:
-                    continue
-                
-                translated = translate_text(text, detected_lang or "en", target_lang)
-                
-                def fmt(s):
-                    h, m = int(s // 3600), int((s % 3600) // 60)
-                    sec, ms = int(s % 60), int((s - int(s)) * 1000)
-                    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
-                
-                srt += f"{i}\n{fmt(seg['start'])} --> {fmt(seg['end'])}\n{translated}\n\n"
-            
-            srt_name = f"{base}_{target_lang}.srt"
-            srt_path = os.path.join(OUTPUT_FOLDER, srt_name)
-            with open(srt_path, "w", encoding="utf-8") as f:
-                f.write(srt)
-            
-            result["srt_url"] = f"/output/{srt_name}"
-        
-        # DONE
-        db_update(task_id, TaskStatus.COMPLETED, 100, "تمت العملية بنجاح! 🎉", "COMPLETED", result)
-        print(f"✅ Done: {task_id[:8]}")
+        # ========== COMPLETE ==========
+        db_update(task_id, Status.COMPLETED, 100, "تمت العملية بنجاح! 🎉", "COMPLETED", result)
+        print(f"✅ Done [{mode}]: {task_id[:8]}")
         
     except Exception as e:
         import traceback
         traceback.print_exc()
-        db_update(task_id, TaskStatus.FAILED, 0, f"فشل: {str(e)[:100]}", "FAILED")
-        print(f"❌ Failed: {task_id[:8]} - {e}")
+        db_update(task_id, Status.FAILED, 0, f"فشل: {str(e)[:100]}", "FAILED")
     finally:
         gc.collect()
 
-# ============= Status =============
+# ============= Status & Download =============
 
 @app.get("/status/{task_id}", response_model=TaskResponse)
 def get_status(task_id: str):
@@ -461,8 +490,6 @@ def get_status(task_id: str):
         result=task.get("result")
     )
 
-# ============= Download =============
-
 @app.get("/download/{task_id}/{file_type}")
 def download(task_id: str, file_type: Literal["video", "srt"]):
     task = db_get(task_id)
@@ -471,12 +498,16 @@ def download(task_id: str, file_type: Literal["video", "srt"]):
     
     result = task.get("result") or {}
     
-    if file_type == "video" and result.get("dubbed_video_path"):
-        return FileResponse(result["dubbed_video_path"], filename="dubbed_video.mp4", media_type="video/mp4")
-    elif file_type == "srt" and result.get("srt_url"):
-        srt_path = os.path.join(OUTPUT_FOLDER, os.path.basename(result["srt_url"]))
-        if os.path.exists(srt_path):
-            return FileResponse(srt_path, filename="subtitles.srt", media_type="text/plain")
+    if file_type == "video":
+        path = result.get("dubbed_video_path")
+        if path and os.path.exists(path):
+            return FileResponse(path, filename="dubbed_video.mp4", media_type="video/mp4")
+    elif file_type == "srt":
+        url = result.get("srt_url", "")
+        if "/output/" in url:
+            srt_path = os.path.join(OUTPUT_FOLDER, os.path.basename(url))
+            if os.path.exists(srt_path):
+                return FileResponse(srt_path, filename="subtitles.srt", media_type="text/plain")
     
     raise HTTPException(404, "الملف غير متوفر")
 
@@ -484,17 +515,14 @@ def download(task_id: str, file_type: Literal["video", "srt"]):
 
 @app.on_event("startup")
 async def startup():
-    print("🚀 Arab Dubbing API v4.0")
-    print(f"🧠 Whisper: Groq Cloud (whisper-large-v3)")
-    print(f"💾 Storage: Supabase")
+    print("🚀 Arab Dubbing API v5.0")
+    print(f"🧠 Whisper: Groq Cloud")
+    print(f"💾 Storage: Supabase (bucket: videos)")
     
     if not GROQ_API_KEY:
-        print("⚠️ GROQ_API_KEY not set!")
-    else:
-        get_groq()
-    
-    if SUPABASE_URL:
-        get_supabase()
+        print("⚠️ GROQ_API_KEY missing!")
+    if not SUPABASE_URL:
+        print("⚠️ SUPABASE_URL missing!")
     
     print("✅ Ready!")
 

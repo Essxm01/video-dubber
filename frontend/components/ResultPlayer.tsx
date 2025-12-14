@@ -48,15 +48,28 @@ const downloadMockFile = (filename: string, content: string, mimeType: string) =
   document.body.removeChild(a);
 };
 
-const MOCK_DUBBED_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4";
+const MOCK_SRT_CONTENT = `1
+00:00:01,000 --> 00:00:06,000
+ترجمة تجريبية للفيديو
+
+2
+00:00:06,500 --> 00:00:12,000
+تمت المعالجة بواسطة دبلجة العرب`;
 
 export const ResultPlayer: React.FC<ResultPlayerProps> = ({ metadata, onReset, t, taskId, result }) => {
   const mode = metadata?.mode || 'BOTH';
 
-  // Determine video source - use real backend URL if available
-  const videoSource = result?.dubbed_video_url
-    ? getOutputUrl(result.dubbed_video_url)
-    : MOCK_DUBBED_VIDEO_URL;
+  // Determine video source - ONLY use real backend URL, no fallback to mock!
+  const hasRealVideo = result?.dubbed_video_url && result.dubbed_video_url.length > 0;
+  const hasSRT = result?.srt_url && result.srt_url.length > 0;
+
+  // Get the actual video URL
+  const videoSource = hasRealVideo ? getOutputUrl(result.dubbed_video_url!) : null;
+
+  // If mode is DUBBING or BOTH but no video URL, show error
+  const videoMissing = (mode === 'DUBBING' || mode === 'BOTH') && !hasRealVideo;
+  // If mode is SUBTITLES but no SRT URL, show error
+  const srtMissing = mode === 'SUBTITLES' && !hasSRT;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -65,6 +78,7 @@ export const ResultPlayer: React.FC<ResultPlayerProps> = ({ metadata, onReset, t
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [videoError, setVideoError] = useState(false);
 
   // Subtitle State
   const [showSubtitles, setShowSubtitles] = useState(mode === 'SUBTITLES' || mode === 'BOTH');
@@ -75,9 +89,11 @@ export const ResultPlayer: React.FC<ResultPlayerProps> = ({ metadata, onReset, t
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const videoId = metadata?.url ? getYoutubeId(metadata.url) : null;
-  const thumbnailUrl = videoId
-    ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
-    : (metadata?.thumbnail || "https://picsum.photos/800/450");
+  const thumbnailUrl = result?.thumbnail
+    ? result.thumbnail
+    : videoId
+      ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
+      : (metadata?.thumbnail || "https://picsum.photos/800/450");
 
   // Generate VTT Blob on mount
   useEffect(() => {
@@ -265,20 +281,39 @@ ${summary}
             onMouseMove={handleMouseMove}
             onMouseLeave={() => isPlaying && setShowControls(false)}
           >
-            <video
-              ref={videoRef}
-              className="w-full h-full object-contain"
-              poster={thumbnailUrl}
-              src={videoSource}
-              onClick={togglePlay}
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onEnded={handleVideoEnded}
-              crossOrigin="anonymous"
-            >
-              {vttUrl && <track kind="subtitles" src={vttUrl} srcLang="ar" label="Arabic" default={showSubtitles} />}
-              Your browser does not support the video tag.
-            </video>
+            {/* Video Player or Error State */}
+            {videoSource ? (
+              <video
+                ref={videoRef}
+                className="w-full h-full object-contain"
+                poster={thumbnailUrl}
+                src={videoSource}
+                onClick={togglePlay}
+                onTimeUpdate={handleTimeUpdate}
+                onLoadedMetadata={handleLoadedMetadata}
+                onEnded={handleVideoEnded}
+                onError={() => setVideoError(true)}
+                crossOrigin="anonymous"
+              >
+                {vttUrl && <track kind="subtitles" src={vttUrl} srcLang="ar" label="Arabic" default={showSubtitles} />}
+              </video>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900 text-white p-8">
+                {mode === 'SUBTITLES' ? (
+                  <>
+                    <div className="text-6xl mb-4">📄</div>
+                    <h3 className="text-xl font-bold mb-2">ملف الترجمة جاهز!</h3>
+                    <p className="text-slate-400 text-center mb-4">اضغط على "ملف الترجمة (SRT)" للتحميل</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-6xl mb-4">⚠️</div>
+                    <h3 className="text-xl font-bold mb-2">الفيديو غير متوفر</h3>
+                    <p className="text-slate-400 text-center">حدث خطأ أثناء معالجة الفيديو. جرب مرة أخرى.</p>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Big Center Play Button (Visible when paused or buffering) */}
             {!isPlaying && (
