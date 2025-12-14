@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback } from 'react';
-import { Link2, Upload, Mic, FileText, Layers, Sparkles, Loader2, AlertCircle, X, CheckCircle2 } from 'lucide-react';
+import { Youtube, Upload, Mic, FileText, Layers, Sparkles, Loader2, AlertCircle, X, CheckCircle2 } from 'lucide-react';
 import { ServiceMode } from '../types';
 
 interface MainInterfaceProps {
@@ -22,7 +22,7 @@ export const MainInterface: React.FC<MainInterfaceProps> = ({
     lang,
     backendOnline,
 }) => {
-    const [inputMode, setInputMode] = useState<InputMode>('file'); // Default to file upload
+    const [inputMode, setInputMode] = useState<InputMode>('youtube');
     const [selectedService, setSelectedService] = useState<ServiceMode>('DUBBING');
     const [youtubeUrl, setYoutubeUrl] = useState('');
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -31,58 +31,56 @@ export const MainInterface: React.FC<MainInterfaceProps> = ({
 
     const t = {
         ar: {
-            headline: 'دبلج وترجم فيديوهاتك',
-            headlineHighlight: 'بذكاء اصطناعي',
-            subheadline: 'حول أي فيديو إلى العربية. اختر الدبلجة الصوتية، الترجمة النصية، أو كليهما معاً.',
-            youtubeTab: '🔗 رابط يوتيوب',
-            uploadTab: '📂 رفع ملف',
+            badge: '✨ مجاني بالكامل 100%',
+            headline1: 'دبلج وترجم فيديوهاتك',
+            headline2: 'بذكاء اصطناعي متطور',
+            subheadline: 'حول أي فيديو يوتيوب أو ملف محلي إلى اللغة العربية. اختر بين الدبلجة الصوتية الكاملة، أو ملفات الترجمة، أو كليهما معاً.',
+            youtubeTab: 'رابط يوتيوب',
+            uploadTab: 'رفع ملف',
             youtubePlaceholder: 'ضع رابط فيديو يوتيوب هنا...',
-            dropzoneTitle: 'اسحب الملف هنا',
-            dropzoneSubtitle: 'أو اضغط لاختيار ملف',
-            dropzoneFormats: 'MP4, MKV, WebM, MOV • الحد الأقصى: 25MB',
-            serviceTitle: 'اختر نوع الخدمة',
+            dropzoneTitle: 'اسحب وأفلت الفيديو هنا',
+            dropzoneSubtitle: 'أو اضغط لاختيار ملف من جهازك',
+            dropzoneFormats: 'الحد الأقصى: 25MB • مدعوم: MP4, MKV, WebM, MOV, AVI',
             dubbing: 'دبلجة صوتية',
-            dubbingDesc: 'تحويل الصوت للعربية',
-            subtitles: 'ترجمة نصية',
-            subtitlesDesc: 'إنشاء ملف SRT',
-            both: 'شامل',
-            bothDesc: 'دبلجة + ترجمة',
+            dubbingDesc: 'تحويل صوت المتحدث إلى العربية مع مزامنة الشفاه',
+            subtitles: 'ترجمة (Subtitles)',
+            subtitlesDesc: 'إنشاء ملفات ترجمة وعرضها على الفيديو',
+            both: 'شامل (دبلجة + ترجمة)',
+            bothDesc: 'أفضل تجربة: صوت عربي مع نصوص مترجمة',
             startBtn: 'ابدأ المعالجة',
             processing: 'جاري المعالجة...',
             fileSelected: 'تم اختيار:',
             removeFile: 'إزالة',
             offlineWarning: 'الخادم غير متصل حالياً',
-            youtubeWarning: '⚠️ روابط يوتيوب قد لا تعمل بسبب قيود الخادم. استخدم رفع الملف للنتائج الأفضل.',
         },
         en: {
-            headline: 'Dub & Translate Your Videos',
-            headlineHighlight: 'with AI',
-            subheadline: 'Convert any video to Arabic. Choose voice dubbing, subtitles, or both.',
-            youtubeTab: '🔗 YouTube Link',
-            uploadTab: '📂 Upload File',
+            badge: '✨ 100% Free',
+            headline1: 'Dub & Translate Your Videos',
+            headline2: 'with Advanced AI',
+            subheadline: 'Convert any YouTube video or local file to Arabic. Choose voice dubbing, subtitles, or both.',
+            youtubeTab: 'YouTube Link',
+            uploadTab: 'Upload File',
             youtubePlaceholder: 'Paste YouTube video link here...',
-            dropzoneTitle: 'Drop file here',
-            dropzoneSubtitle: 'or click to browse',
-            dropzoneFormats: 'MP4, MKV, WebM, MOV • Max: 25MB',
-            serviceTitle: 'Select Service Type',
+            dropzoneTitle: 'Drag & Drop Video Here',
+            dropzoneSubtitle: 'or click to browse files',
+            dropzoneFormats: 'Max: 25MB • Supported: MP4, MKV, WebM, MOV, AVI',
             dubbing: 'Voice Dubbing',
-            dubbingDesc: 'Convert audio to Arabic',
+            dubbingDesc: 'Convert speaker audio to Arabic with lip sync',
             subtitles: 'Subtitles Only',
-            subtitlesDesc: 'Generate SRT file',
-            both: 'Complete',
-            bothDesc: 'Dubbing + Subtitles',
+            subtitlesDesc: 'Generate subtitle files and display on video',
+            both: 'Complete (Dub + Subs)',
+            bothDesc: 'Best experience: Arabic audio with translated text',
             startBtn: 'Start Processing',
             processing: 'Processing...',
             fileSelected: 'Selected:',
             removeFile: 'Remove',
             offlineWarning: 'Server is currently offline',
-            youtubeWarning: '⚠️ YouTube links may not work due to server restrictions. Use file upload for best results.',
         },
     }[lang];
 
     const handleFileSelect = useCallback((file: File) => {
         const validTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-matroska'];
-        const maxSize = 25 * 1024 * 1024; // 25MB
+        const maxSize = 25 * 1024 * 1024;
 
         if (!validTypes.includes(file.type) && !file.name.match(/\.(mp4|mkv|webm|mov)$/i)) {
             alert(lang === 'ar' ? 'نوع الملف غير مدعوم' : 'File type not supported');
@@ -126,95 +124,106 @@ export const MainInterface: React.FC<MainInterfaceProps> = ({
     const canStart = inputMode === 'youtube' ? youtubeUrl.trim().length > 0 : selectedFile !== null;
 
     const services: { id: ServiceMode; icon: React.ReactNode; title: string; desc: string }[] = [
-        { id: 'DUBBING', icon: <Mic className="w-6 h-6" />, title: t.dubbing, desc: t.dubbingDesc },
-        { id: 'SUBTITLES', icon: <FileText className="w-6 h-6" />, title: t.subtitles, desc: t.subtitlesDesc },
-        { id: 'BOTH', icon: <Layers className="w-6 h-6" />, title: t.both, desc: t.bothDesc },
+        { id: 'DUBBING', icon: <Mic className="w-5 h-5" />, title: t.dubbing, desc: t.dubbingDesc },
+        { id: 'SUBTITLES', icon: <FileText className="w-5 h-5" />, title: t.subtitles, desc: t.subtitlesDesc },
+        { id: 'BOTH', icon: <Layers className="w-5 h-5" />, title: t.both, desc: t.bothDesc },
     ];
 
     return (
-        <div className="w-full max-w-2xl mx-auto px-4">
+        <div className="w-full max-w-3xl mx-auto px-4 py-8">
+
             {/* Hero Header */}
-            <div className="text-center mb-8">
-                <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-sm font-bold mb-4">
+            <div className="text-center mb-10">
+                {/* Badge */}
+                <div className="inline-flex items-center px-4 py-2 rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 dark:from-indigo-900/30 dark:to-purple-900/30 text-indigo-700 dark:text-indigo-300 text-sm font-bold mb-6 border border-indigo-200/50 dark:border-indigo-700/50">
                     <Sparkles className="w-4 h-4 ltr:mr-2 rtl:ml-2" />
-                    {lang === 'ar' ? '100% مجاني' : '100% Free'}
+                    {t.badge}
                 </div>
-                <h1 className="text-4xl md:text-5xl font-black text-slate-900 dark:text-white mb-4 leading-tight">
-                    {t.headline}{' '}
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600">
-                        {t.headlineHighlight}
+
+                {/* Headlines */}
+                <h1 className="text-4xl md:text-6xl font-black text-slate-900 dark:text-white mb-3 leading-tight">
+                    {t.headline1}
+                </h1>
+                <h1 className="text-4xl md:text-6xl font-black mb-6 leading-tight">
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600">
+                        {t.headline2}
                     </span>
                 </h1>
-                <p className="text-lg text-slate-600 dark:text-slate-400 max-w-lg mx-auto">
+
+                {/* Subheadline */}
+                <p className="text-lg text-slate-600 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed">
                     {t.subheadline}
                 </p>
             </div>
 
             {/* Backend Offline Warning */}
             {backendOnline === false && (
-                <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl flex items-center justify-center gap-2 text-amber-700 dark:text-amber-400">
                     <AlertCircle className="w-5 h-5 shrink-0" />
                     <span className="text-sm font-medium">{t.offlineWarning}</span>
                 </div>
             )}
 
             {/* Main Card */}
-            <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl shadow-slate-200/50 dark:shadow-slate-900/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="bg-white dark:bg-slate-800/80 rounded-3xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 border border-slate-200/80 dark:border-slate-700/80 overflow-hidden backdrop-blur-sm">
 
-                {/* Input Mode Tabs */}
-                <div className="flex border-b border-slate-200 dark:border-slate-700">
-                    <button
-                        onClick={() => setInputMode('youtube')}
-                        className={`flex-1 py-4 px-4 text-center font-bold transition-all flex items-center justify-center gap-2 ${inputMode === 'youtube'
-                                ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
-                                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                            }`}
-                    >
-                        <Link2 className="w-5 h-5" />
-                        {t.youtubeTab}
-                    </button>
-                    <button
-                        onClick={() => setInputMode('file')}
-                        className={`flex-1 py-4 px-4 text-center font-bold transition-all flex items-center justify-center gap-2 ${inputMode === 'file'
-                                ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
-                                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                            }`}
-                    >
-                        <Upload className="w-5 h-5" />
-                        {t.uploadTab}
-                    </button>
+                {/* Tabs - Pill Style */}
+                <div className="flex justify-center pt-6 pb-4">
+                    <div className="inline-flex bg-slate-100 dark:bg-slate-700/50 rounded-full p-1.5">
+                        <button
+                            onClick={() => setInputMode('youtube')}
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold transition-all duration-300 ${inputMode === 'youtube'
+                                    ? 'bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-md'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                                }`}
+                        >
+                            <Youtube className="w-4 h-4" />
+                            {t.youtubeTab}
+                        </button>
+                        <button
+                            onClick={() => setInputMode('file')}
+                            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold transition-all duration-300 ${inputMode === 'file'
+                                    ? 'bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-md'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                                }`}
+                        >
+                            <Upload className="w-4 h-4" />
+                            {t.uploadTab}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Input Area */}
-                <div className="p-6">
+                <div className="px-6 pb-6">
                     {inputMode === 'youtube' ? (
-                        <div className="space-y-3">
-                            {/* YouTube Warning */}
-                            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl text-amber-700 dark:text-amber-400 text-sm">
-                                {t.youtubeWarning}
-                            </div>
-                            <div className="relative">
+                        /* YouTube URL Input */
+                        <div className="relative">
+                            <div className="flex items-center bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
                                 <input
                                     type="text"
                                     value={youtubeUrl}
                                     onChange={(e) => setYoutubeUrl(e.target.value)}
                                     placeholder={t.youtubePlaceholder}
-                                    className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg"
+                                    className="flex-1 px-5 py-4 bg-transparent border-none text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none text-base"
                                     dir="ltr"
                                 />
+                                <div className="px-4 text-slate-400">
+                                    <Youtube className="w-6 h-6" />
+                                </div>
                             </div>
                         </div>
                     ) : (
+                        /* File Upload Dropzone */
                         <div
                             onDrop={handleDrop}
                             onDragOver={handleDragOver}
                             onDragLeave={handleDragLeave}
                             onClick={() => fileInputRef.current?.click()}
-                            className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${isDragging
-                                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10'
+                            className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300 ${isDragging
+                                    ? 'border-indigo-500 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20'
                                     : selectedFile
-                                        ? 'border-green-400 bg-green-50 dark:bg-green-500/10'
-                                        : 'border-slate-300 dark:border-slate-600 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-700/50'
+                                        ? 'border-green-400 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20'
+                                        : 'border-slate-300 dark:border-slate-600 bg-gradient-to-br from-slate-50 to-slate-100/50 dark:from-slate-800/50 dark:to-slate-700/30 hover:border-indigo-400 hover:from-indigo-50/50 hover:to-purple-50/50'
                                 }`}
                         >
                             <input
@@ -226,72 +235,83 @@ export const MainInterface: React.FC<MainInterfaceProps> = ({
                             />
 
                             {selectedFile ? (
-                                <div className="space-y-3">
-                                    <div className="inline-flex items-center justify-center w-14 h-14 bg-green-100 dark:bg-green-500/20 rounded-full">
-                                        <CheckCircle2 className="w-7 h-7 text-green-600 dark:text-green-400" />
+                                <div className="space-y-4">
+                                    <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 dark:bg-green-500/20 rounded-full">
+                                        <CheckCircle2 className="w-8 h-8 text-green-600 dark:text-green-400" />
                                     </div>
                                     <div>
                                         <p className="text-sm text-slate-500 dark:text-slate-400">{t.fileSelected}</p>
-                                        <p className="font-bold text-slate-900 dark:text-white truncate max-w-xs mx-auto">{selectedFile.name}</p>
-                                        <p className="text-sm text-slate-500">{(selectedFile.size / 1024 / 1024).toFixed(1)} MB</p>
+                                        <p className="font-bold text-slate-900 dark:text-white text-lg truncate max-w-sm mx-auto">{selectedFile.name}</p>
+                                        <p className="text-sm text-slate-500 mt-1">{(selectedFile.size / 1024 / 1024).toFixed(1)} MB</p>
                                     </div>
                                     <button
                                         onClick={(e) => { e.stopPropagation(); setSelectedFile(null); }}
-                                        className="inline-flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                                        className="inline-flex items-center gap-1.5 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors font-medium"
                                     >
                                         <X className="w-4 h-4" />
                                         {t.removeFile}
                                     </button>
                                 </div>
                             ) : (
-                                <div className="space-y-3">
-                                    <div className="inline-flex items-center justify-center w-14 h-14 bg-slate-100 dark:bg-slate-700 rounded-full">
-                                        <Upload className="w-7 h-7 text-slate-400" />
+                                <div className="space-y-4">
+                                    <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 dark:bg-indigo-500/20 rounded-full">
+                                        <Upload className="w-8 h-8 text-indigo-500 dark:text-indigo-400" />
                                     </div>
                                     <div>
-                                        <p className="font-bold text-slate-700 dark:text-slate-200">{t.dropzoneTitle}</p>
-                                        <p className="text-sm text-slate-500 dark:text-slate-400">{t.dropzoneSubtitle}</p>
+                                        <p className="font-bold text-slate-800 dark:text-slate-200 text-lg">{t.dropzoneTitle}</p>
+                                        <p className="text-slate-500 dark:text-slate-400 mt-1">{t.dropzoneSubtitle}</p>
                                     </div>
-                                    <p className="text-xs text-slate-400">{t.dropzoneFormats}</p>
+                                    <p className="text-xs text-slate-400 dark:text-slate-500">{t.dropzoneFormats}</p>
                                 </div>
                             )}
                         </div>
                     )}
                 </div>
 
-                {/* Service Selection */}
-                <div className="px-6 pb-2">
-                    <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mb-3 text-center">{t.serviceTitle}</p>
+                {/* Service Selection - 3 Cards */}
+                <div className="px-6 pb-6">
                     <div className="grid grid-cols-3 gap-3">
                         {services.map((service) => (
                             <button
                                 key={service.id}
                                 onClick={() => setSelectedService(service.id)}
-                                className={`p-4 rounded-xl border-2 transition-all text-center ${selectedService === service.id
-                                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 ring-2 ring-indigo-500/20'
-                                        : 'border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-500/50'
+                                className={`relative p-5 rounded-2xl border-2 transition-all duration-300 text-center group ${selectedService === service.id
+                                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 shadow-lg shadow-indigo-500/10'
+                                        : 'border-slate-200 dark:border-slate-600/50 bg-white dark:bg-slate-700/30 hover:border-indigo-300 dark:hover:border-indigo-500/50 hover:shadow-md'
                                     }`}
                             >
-                                <div className={`inline-flex p-2 rounded-lg mb-2 ${selectedService === service.id
-                                        ? 'bg-indigo-500 text-white'
-                                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                                {/* Icon */}
+                                <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl mb-3 transition-all ${selectedService === service.id
+                                        ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30'
+                                        : 'bg-slate-100 dark:bg-slate-600/50 text-slate-500 dark:text-slate-400 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/30 group-hover:text-indigo-600'
                                     }`}>
                                     {service.icon}
                                 </div>
-                                <div className="font-bold text-slate-900 dark:text-white text-sm">{service.title}</div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{service.desc}</div>
+
+                                {/* Title */}
+                                <h3 className={`font-bold text-sm mb-1.5 transition-colors ${selectedService === service.id
+                                        ? 'text-indigo-700 dark:text-indigo-300'
+                                        : 'text-slate-800 dark:text-slate-200'
+                                    }`}>
+                                    {service.title}
+                                </h3>
+
+                                {/* Description */}
+                                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                                    {service.desc}
+                                </p>
                             </button>
                         ))}
                     </div>
                 </div>
 
                 {/* Action Button */}
-                <div className="p-6 pt-4">
+                <div className="px-6 pb-6">
                     <button
                         onClick={handleStart}
                         disabled={!canStart || isLoading}
-                        className={`w-full py-4 px-6 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3 ${canStart && !isLoading
-                                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40'
+                        className={`w-full py-4 px-6 rounded-2xl font-bold text-lg transition-all duration-300 flex items-center justify-center gap-3 ${canStart && !isLoading
+                                ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 hover:from-indigo-700 hover:via-purple-700 hover:to-indigo-700 text-white shadow-xl shadow-indigo-500/25 hover:shadow-2xl hover:shadow-indigo-500/30 hover:-translate-y-0.5'
                                 : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed'
                             }`}
                     >
@@ -309,9 +329,9 @@ export const MainInterface: React.FC<MainInterfaceProps> = ({
                 {/* Error Message */}
                 {error && (
                     <div className="px-6 pb-6">
-                        <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl flex items-center gap-2 text-red-600 dark:text-red-400">
+                        <div className="p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl flex items-center justify-center gap-2 text-red-600 dark:text-red-400">
                             <AlertCircle className="w-5 h-5 shrink-0" />
-                            <span className="text-sm">{error}</span>
+                            <span className="text-sm font-medium">{error}</span>
                         </div>
                     </div>
                 )}
