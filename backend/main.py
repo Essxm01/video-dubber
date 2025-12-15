@@ -328,23 +328,25 @@ Emotion: Match the content naturally.
         print(f"⚠️ Gemini 2.5 TTS error: {e}")
         return False
 
-async def tts_edge_fallback(text: str, path: str, voice: str = "ar-EG-SalmaNeural"):
-    """Edge-TTS fallback - ALWAYS works"""
+async def tts_edge(text: str, path: str, voice: str = "ar-EG-SalmaNeural"):
+    """Edge-TTS - Fast and reliable Arabic TTS"""
     import edge_tts
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(path)
-    print(f"🔊 Edge-TTS Fallback: {path}")
+    print(f"🔊 Edge-TTS: {path}")
 
 async def generate_tts(text: str, path: str):
     """
-    Generate TTS - tries Gemini 2.5 first, falls back to Edge-TTS
+    Generate TTS - Uses Edge-TTS directly for speed
+    Gemini TTS disabled due to timeout issues
     """
-    # Try Gemini 2.5 Flash TTS first
-    if tts_gemini_25(text, path):
-        return
+    # DISABLED: Gemini TTS causes 30s timeout per segment
+    # To re-enable: uncomment the following lines
+    # if tts_gemini_25(text, path):
+    #     return
     
-    # Fallback to Edge-TTS (always reliable)
-    await tts_edge_fallback(text, path)
+    # Use Edge-TTS directly (fast and reliable)
+    await tts_edge(text, path)
 
 # ============= Audio/Video Processing =============
 

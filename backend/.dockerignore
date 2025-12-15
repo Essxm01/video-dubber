@@ -1,0 +1,61 @@
+# ============================================
+# Docker Ignore File
+# Exclude unnecessary files from build context
+# ============================================
+
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (if any frontend files exist)
+node_modules/
+npm-debug.log
+
+# Media files (don't include local test files)
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.avi
+*.wav
+*.mp3
+*.srt
+audio/
+output/
+uploads/
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Documentation
+*.md
+docs/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
+*.bak
