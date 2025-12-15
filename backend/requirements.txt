@@ -1,41 +1,12 @@
-# ============================================
-# Arab Dubbing API - Requirements v6.2
-# Groq Whisper + Gemini 2.5 TTS + Edge Fallback
-# ============================================
-
-# Core Framework
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-gunicorn==21.2.0
-
-# Video Processing
-yt-dlp>=2024.12.6
-
-# Groq API (Cloud Whisper)
-groq>=0.4.0
-
-# Google Gemini API (NEW SDK with TTS)
-google-genai>=0.3.0
-
-# Translation (Offline Neural MT)
-argostranslate==1.9.6
-
-# Text-to-Speech (Fallback)
-edge-tts>=6.1.10
-
-# HTTP & Multipart
-python-multipart==0.0.9
-httpx>=0.25.0
-aiofiles>=23.2.1
-
-# Supabase
-supabase>=2.0.0
-
-# Environment
-python-dotenv>=1.0.0
-
-# Utilities
-pydantic>=2.0.0
-
-# Async support
-nest-asyncio>=1.6.0
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+supabase
+groq
+google-genai
+edge-tts
+moviepy
+ffmpeg-python
+deep-translator
+nest_asyncio
