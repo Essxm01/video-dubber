@@ -469,7 +469,8 @@ function App() {
             {/* State 3: COMPLETED */}
             {state === ProcessingState.COMPLETED && (
               <div className="py-12 w-full">
-                <ResultPlayer metadata={metadata} onReset={handleReset} t={t} />
+                {/* Force remount when URL changes by using key prop */}
+                <ResultPlayer key={metadata?.url} metadata={metadata} onReset={handleReset} t={t} />
               </div>
             )}
 
