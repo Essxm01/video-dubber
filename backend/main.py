@@ -1,7 +1,7 @@
 """
-Arab Dubbing API - Version 9.1 (Model Name Fix)
-- FIXED: Changed model alias 'gemini-1.5-flash' to explicit 'gemini-1.5-flash-001'
-- PURPOSE: Solves 404 Model Not Found errors on v1beta API
+Arab Dubbing API - Version 10.0 (Standard Library Fix)
+- FIXED: Switched to 'google-generativeai' to resolve 404 Model errors
+- MODEL: gemini-1.5-flash (Working & Stable)
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -15,8 +15,8 @@ import subprocess
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+import google.generativeai as genai
 
-# Load env
 load_dotenv()
 
 # Configuration
@@ -25,7 +25,11 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Arab Dubbing API", version="9.1.0")
+# Configure Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+app = FastAPI(title="Arab Dubbing API", version="10.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,25 +48,11 @@ for folder in [AUDIO_FOLDER, OUTPUT_FOLDER, UPLOAD_FOLDER]:
 
 app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
-# ============= DB Helper =============
 def get_fresh_supabase():
     try:
         from supabase import create_client
         return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        print(f"⚠️ Supabase Error: {e}")
-        return None
-
-class Status:
-    PENDING = "PENDING"
-    EXTRACTING = "EXTRACTING"
-    TRANSCRIBING = "TRANSCRIBING"
-    TRANSLATING = "TRANSLATING"
-    GENERATING_AUDIO = "GENERATING_AUDIO"
-    MERGING = "MERGING"
-    UPLOADING = "UPLOADING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+    except: return None
 
 def db_update(task_id: str, status: str, progress: int, message: str, result: dict = None):
     try:
@@ -81,11 +71,7 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
         with open(file_path, "rb") as f:
             sb.storage.from_(bucket).upload(path=dest_name, file=f.read(), file_options={"content-type": content_type, "upsert": "true"})
         return sb.storage.from_(bucket).get_public_url(dest_name)
-    except Exception as e:
-        print(f"Storage Upload Error: {e}")
-        return None
-
-# ============= AI Logic =============
+    except: return None
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
@@ -114,55 +100,32 @@ def transcribe_groq(audio_path: str):
 
 def translate_with_gemini(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
-    if not GEMINI_API_KEY: return text
     try:
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        
-        # FIXED: Using explicit version 'gemini-1.5-flash-001'
-        prompt = f"""Translate the following text to {target_lang} (Arabic). 
-        Maintain the meaning suitable for video dubbing. 
-        Only return the translated text, no explanations.
-        Text: {text}"""
-        
-        response = client.models.generate_content(
-            model="gemini-1.5-flash-001", 
-            contents=prompt
-        )
-        translated = response.text.strip()
-        print(f"🌐 Gemini Trans: {text[:15]}... -> {translated[:15]}...")
-        return translated
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(f"Translate to {target_lang} (Arabic), return only text: {text}")
+        return response.text.strip()
     except Exception as e:
         print(f"⚠️ Translation Failed: {e}")
-        # LAST RESORT FALLBACK: If API fails, return original text to avoid crashing
         return text
 
 async def generate_tts(text: str, path: str):
-    # Using Edge TTS (Stable & Free)
     try:
         import edge_tts
         await edge_tts.Communicate(text, "ar-EG-SalmaNeural").save(path)
-        return
-    except Exception as e:
-        print(f"Edge TTS Error: {e}")
+    except: pass
 
 def merge_audio_video(video_path, audio_files, output_path):
     if not audio_files: return
     list_file = "list.txt"
     with open(list_file, "w") as f:
         for a in audio_files: f.write(f"file '{os.path.abspath(a)}'\n")
-    
     merged_audio = "merged_audio.mp3"
     subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", merged_audio], check=True)
     subprocess.run(["ffmpeg", "-i", video_path, "-i", merged_audio, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-y", output_path], check=True)
-    
     try:
         os.remove(list_file)
         os.remove(merged_audio)
     except: pass
-
-# ============= Routes =============
 
 class TaskResponse(BaseModel):
     task_id: str
@@ -178,12 +141,12 @@ async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)
     sb = get_fresh_supabase()
     if sb:
         sb.table("projects").insert({
-            "id": task_id, "title": file.filename, "status": Status.PENDING, 
+            "id": task_id, "title": file.filename, "status": "PENDING", 
             "progress": 0, "mode": mode, "created_at": datetime.now().isoformat()
         }).execute()
-
+    
     background_tasks.add_task(process_video_task, task_id, path, mode, target_lang, file.filename)
-    return TaskResponse(task_id=task_id, status=Status.PENDING)
+    return TaskResponse(task_id=task_id, status="PENDING")
 
 @app.get("/status/{task_id}")
 def status(task_id: str):
@@ -198,41 +161,34 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         base = task_id[:8]
         audio_path = os.path.join(AUDIO_FOLDER, f"{base}.mp3")
         
-        db_update(task_id, Status.EXTRACTING, 10, "Extracting Audio...")
+        db_update(task_id, "EXTRACTING", 10, "Extracting Audio...")
         extract_audio(video_path, audio_path)
         
-        db_update(task_id, Status.TRANSCRIBING, 30, "Transcribing...")
+        db_update(task_id, "TRANSCRIBING", 30, "Transcribing...")
         segments = transcribe_groq(audio_path)
         
         tts_files = []
-        total = len(segments)
-        
         for i, seg in enumerate(segments):
-            progress = 30 + int((i / total) * 50)
-            if i % 2 == 0:
-                db_update(task_id, Status.GENERATING_AUDIO, progress, f"Dubbing {i+1}/{total}...")
+            progress = 30 + int((i / len(segments)) * 50)
+            if i % 3 == 0: db_update(task_id, "GENERATING_AUDIO", progress, f"Dubbing {i+1}/{len(segments)}...")
             
-            # 1. Translate (Using explicit Gemini model name)
-            translated_text = translate_with_gemini(seg["text"], target_lang)
-            
-            # 2. TTS (Using Edge TTS)
+            translated = translate_with_gemini(seg["text"], target_lang)
             tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
-            await generate_tts(translated_text, tts_path)
+            await generate_tts(translated, tts_path)
             tts_files.append(tts_path)
             
-        db_update(task_id, Status.MERGING, 90, "Merging...")
+        db_update(task_id, "MERGING", 90, "Merging...")
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
         merge_audio_video(video_path, tts_files, output_path)
         
-        db_update(task_id, Status.UPLOADING, 95, "Uploading...")
+        db_update(task_id, "UPLOADING", 95, "Uploading...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
         
-        result = {"dubbed_video_url": url, "title": filename}
-        db_update(task_id, Status.COMPLETED, 100, "Done!", result=result)
+        db_update(task_id, "COMPLETED", 100, "Done!", result={"dubbed_video_url": url, "title": filename})
         
     except Exception as e:
         print(f"🔥 FATAL ERROR: {e}")
-        db_update(task_id, Status.FAILED, 0, f"Error: {str(e)[:100]}")
+        db_update(task_id, "FAILED", 0, f"Error: {str(e)[:100]}")
 
 if __name__ == "__main__":
     import uvicorn

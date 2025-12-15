@@ -5,7 +5,7 @@ python-multipart
 python-dotenv
 supabase
 groq
-google-genai
+google-generativeai
 edge-tts
 moviepy
 ffmpeg-python
