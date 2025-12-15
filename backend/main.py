@@ -1,7 +1,7 @@
 """
-Arab Dubbing API - Version 9.0 (The Quota Saver)
-- FIXED: Replaced experimental models (2.0/2.5) with stable Gemini 1.5 Flash
-- GUARANTEE: Translation WILL work now (No more limit: 0 errors)
+Arab Dubbing API - Version 9.1 (Model Name Fix)
+- FIXED: Changed model alias 'gemini-1.5-flash' to explicit 'gemini-1.5-flash-001'
+- PURPOSE: Solves 404 Model Not Found errors on v1beta API
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -25,7 +25,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Arab Dubbing API", version="9.0.0")
+app = FastAPI(title="Arab Dubbing API", version="9.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -120,14 +120,14 @@ def translate_with_gemini(text: str, target_lang: str = "ar") -> str:
         from google.genai import types
         client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # FIXED: Using stable model 'gemini-1.5-flash' to avoid quota errors
+        # FIXED: Using explicit version 'gemini-1.5-flash-001'
         prompt = f"""Translate the following text to {target_lang} (Arabic). 
         Maintain the meaning suitable for video dubbing. 
         Only return the translated text, no explanations.
         Text: {text}"""
         
         response = client.models.generate_content(
-            model="gemini-1.5-flash", 
+            model="gemini-1.5-flash-001", 
             contents=prompt
         )
         translated = response.text.strip()
@@ -135,16 +135,13 @@ def translate_with_gemini(text: str, target_lang: str = "ar") -> str:
         return translated
     except Exception as e:
         print(f"⚠️ Translation Failed: {e}")
+        # LAST RESORT FALLBACK: If API fails, return original text to avoid crashing
         return text
 
 async def generate_tts(text: str, path: str):
-    # NOTE: Gemini 2.5 TTS has very strict quotas (10 req/day). 
-    # We will prioritize Edge TTS for stability until quota increases.
-    
-    # 1. Edge TTS (High Quality Arabic Voice)
+    # Using Edge TTS (Stable & Free)
     try:
         import edge_tts
-        # ar-EG-SalmaNeural is a very good, natural Arabic voice
         await edge_tts.Communicate(text, "ar-EG-SalmaNeural").save(path)
         return
     except Exception as e:
@@ -215,10 +212,10 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             if i % 2 == 0:
                 db_update(task_id, Status.GENERATING_AUDIO, progress, f"Dubbing {i+1}/{total}...")
             
-            # 1. Translate (Using stable Gemini 1.5)
+            # 1. Translate (Using explicit Gemini model name)
             translated_text = translate_with_gemini(seg["text"], target_lang)
             
-            # 2. TTS (Using reliable Edge TTS)
+            # 2. TTS (Using Edge TTS)
             tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
             await generate_tts(translated_text, tts_path)
             tts_files.append(tts_path)
