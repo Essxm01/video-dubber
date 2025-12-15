@@ -1,12 +1,12 @@
 """
-Arab Dubbing API - Production Version v6.1
+Arab Dubbing API - Production Version v6.2
 AI-powered video dubbing and translation platform
 
 FEATURES:
 - Groq API for Whisper transcription (whisper-large-v3)
-- Google Gemini TTS (primary) with Edge-TTS fallback
-- Supabase Storage with retry logic (fixes disconnection)
-- Conditional processing based on mode
+- Gemini 2.5 Flash TTS (primary) with Edge-TTS fallback
+- Director's Notes for natural Arabic speech
+- Supabase Storage with retry logic
 - Argos Translate for translation
 """
 
@@ -33,7 +33,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-app = FastAPI(title="Arab Dubbing API", version="6.1.0")
+app = FastAPI(title="Arab Dubbing API", version="6.2.0")
 
 # CORS
 app.add_middleware(
@@ -57,7 +57,7 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 # ============= Fresh Supabase Client (Fixes disconnection) =============
 
 def get_fresh_supabase():
-    """Create a FRESH Supabase client for each operation to avoid timeout"""
+    """Create a FRESH Supabase client for each operation"""
     try:
         from supabase import create_client
         return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -94,7 +94,6 @@ class Status:
 # ============= DB Operations with Retry =============
 
 def db_create(task_id: str, filename: str, mode: str):
-    """Create task in Supabase with retry"""
     for attempt in range(3):
         try:
             sb = get_fresh_supabase()
@@ -116,7 +115,6 @@ def db_create(task_id: str, filename: str, mode: str):
             time.sleep(1)
 
 def db_update(task_id: str, status: str, progress: int, message: str, stage: str = None, result: dict = None):
-    """Update task in Supabase with retry"""
     for attempt in range(3):
         try:
             sb = get_fresh_supabase()
@@ -138,7 +136,6 @@ def db_update(task_id: str, status: str, progress: int, message: str, stage: str
             time.sleep(1)
 
 def db_get(task_id: str) -> dict:
-    """Get task from Supabase with retry"""
     for attempt in range(3):
         try:
             sb = get_fresh_supabase()
@@ -150,14 +147,11 @@ def db_get(task_id: str) -> dict:
         except Exception as e:
             print(f"⚠️ DB get attempt {attempt+1}/3: {e}")
             time.sleep(0.5)
-    
-    # Return placeholder to prevent 404
     return {"status": "PROCESSING", "progress": 10, "message": "جاري المعالجة..."}
 
 # ============= Storage with Public URL =============
 
 def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type: str) -> str:
-    """Upload file to Supabase Storage and return PUBLIC URL"""
     for attempt in range(3):
         try:
             sb = get_fresh_supabase()
@@ -167,14 +161,12 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
             with open(file_path, "rb") as f:
                 file_data = f.read()
             
-            # Upload
             sb.storage.from_(bucket).upload(
                 path=dest_name,
                 file=file_data,
                 file_options={"content-type": content_type, "upsert": "true"}
             )
             
-            # Get PUBLIC URL
             public_url = sb.storage.from_(bucket).get_public_url(dest_name)
             print(f"✅ UPLOADED: {dest_name}")
             print(f"✅ FINAL PUBLIC URL: {public_url}")
@@ -183,7 +175,6 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
         except Exception as e:
             print(f"⚠️ Storage upload attempt {attempt+1}/3: {e}")
             time.sleep(1)
-    
     return None
 
 # ============= Models =============
@@ -206,7 +197,6 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
         return False
 
 def transcribe_groq(audio_path: str) -> tuple:
-    """Transcribe using Groq API"""
     try:
         client = get_groq()
         if not client:
@@ -247,45 +237,113 @@ def translate_text(text: str, src: str = "en", tgt: str = "ar") -> str:
     except:
         return text
 
-# ============= TTS (Gemini Primary + Edge-TTS Fallback) =============
+# ============= TTS: GEMINI 2.5 PRIMARY + EDGE-TTS FALLBACK =============
+
+def tts_gemini_25(text: str, output_path: str) -> bool:
+    """
+    Generate TTS using Gemini 2.5 Flash Preview TTS
+    Uses Director's Notes for natural Arabic speech
+    Returns True if success, False to trigger fallback
+    """
+    if not GEMINI_API_KEY:
+        print("⚠️ GEMINI_API_KEY not set, using fallback")
+        return False
+    
+    try:
+        from google import genai
+        from google.genai import types
+        
+        # Initialize client
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # Build prompt with Director's Notes for natural Arabic
+        prompt_with_notes = f"""### DIRECTOR'S NOTES
+Style: Professional, warm, and engaging narration.
+Language: Arabic (Egyptian dialect) - speak naturally and clearly.
+Pace: Moderate, suitable for video dubbing.
+Emotion: Match the content naturally.
+
+#### TRANSCRIPT
+{text}"""
+        
+        # Generate audio using Gemini 2.5 Flash TTS
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-tts",
+            contents=prompt_with_notes,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name="Zephyr"  # Expressive multilingual voice
+                        )
+                    )
+                )
+            )
+        )
+        
+        # Extract audio data from response
+        if (response.candidates and 
+            response.candidates[0].content and 
+            response.candidates[0].content.parts):
+            
+            part = response.candidates[0].content.parts[0]
+            
+            if hasattr(part, 'inline_data') and part.inline_data:
+                audio_data = part.inline_data.data
+                mime_type = getattr(part.inline_data, 'mime_type', 'audio/wav')
+                
+                # Determine temp file extension based on mime
+                if 'wav' in mime_type:
+                    temp_ext = '.wav'
+                elif 'mp3' in mime_type:
+                    temp_ext = '.mp3'
+                else:
+                    temp_ext = '.wav'
+                
+                temp_path = output_path.replace('.mp3', f'_temp{temp_ext}')
+                
+                # Save raw audio
+                with open(temp_path, 'wb') as f:
+                    f.write(audio_data)
+                
+                # Convert to MP3 if needed
+                if temp_ext != '.mp3':
+                    cmd = ["ffmpeg", "-i", temp_path, "-y", output_path]
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                else:
+                    os.rename(temp_path, output_path)
+                
+                print(f"🎙️ Gemini 2.5 TTS: {output_path}")
+                return True
+        
+        print("⚠️ Gemini 2.5 returned no audio data")
+        return False
+        
+    except Exception as e:
+        print(f"⚠️ Gemini 2.5 TTS error: {e}")
+        return False
 
 async def tts_edge_fallback(text: str, path: str, voice: str = "ar-EG-SalmaNeural"):
     """Edge-TTS fallback - ALWAYS works"""
     import edge_tts
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(path)
-    print(f"🔊 Edge-TTS: {path}")
-
-def tts_gemini(text: str, path: str) -> bool:
-    """Try Gemini TTS - returns True if success, False if should fallback"""
-    if not GEMINI_API_KEY:
-        return False
-    
-    try:
-        import google.generativeai as genai
-        
-        genai.configure(api_key=GEMINI_API_KEY)
-        
-        # Use Gemini for text generation (TTS via API may not be available)
-        # Fallback to edge-tts for actual audio generation
-        # This is a placeholder - Gemini's direct TTS API is limited
-        
-        # For now, we'll use Edge-TTS as primary since Gemini TTS
-        # requires specific SDK versions and may not be stable
-        print("⚠️ Gemini TTS not yet stable, using Edge-TTS")
-        return False
-        
-    except Exception as e:
-        print(f"⚠️ Gemini TTS error: {e}")
-        return False
+    print(f"🔊 Edge-TTS Fallback: {path}")
 
 async def generate_tts(text: str, path: str):
-    """Generate TTS - uses Edge-TTS (reliable)"""
-    # Try Gemini first (when available)
-    if tts_gemini(text, path):
+    """
+    Generate TTS - tries Gemini 2.5 first, falls back to Edge-TTS
+    """
+    # Try Gemini 2.5 Flash TTS first
+    if tts_gemini_25(text, path):
         return
     
-    # Use Edge-TTS (always reliable)
+    # Fallback to Edge-TTS (always reliable)
     await tts_edge_fallback(text, path)
 
 # ============= Audio/Video Processing =============
@@ -335,13 +393,13 @@ def generate_srt(segments: list, lang: str, tgt: str) -> str:
 
 @app.get("/")
 def root():
-    return {"status": "active", "version": "6.1.0", "tts": "Edge-TTS"}
+    return {"status": "active", "version": "6.2.0", "tts": "Gemini 2.5 + Edge Fallback"}
 
 @app.get("/health")
 def health():
     return {"status": "healthy"}
 
-MAX_SIZE = 25 * 1024 * 1024  # 25MB
+MAX_SIZE = 25 * 1024 * 1024
 
 @app.post("/upload", response_model=TaskResponse)
 async def upload(
@@ -379,7 +437,6 @@ async def upload(
 # ============= Main Processing =============
 
 async def process_video(task_id: str, video_path: str, mode: str, target_lang: str, filename: str):
-    """Main video processing pipeline"""
     try:
         print(f"🎬 Processing [{mode}]: {task_id[:8]}")
         base = task_id[:8]
@@ -439,7 +496,7 @@ async def process_video(task_id: str, video_path: str, mode: str, target_lang: s
         
         # STEP 5: TTS Dubbing (if needed)
         if mode in ["DUBBING", "BOTH"]:
-            db_update(task_id, Status.GENERATING_AUDIO, 55, "توليد الدبلجة...", "GENERATING_AUDIO")
+            db_update(task_id, Status.GENERATING_AUDIO, 55, "توليد الدبلجة (Gemini 2.5)...", "GENERATING_AUDIO")
             
             import nest_asyncio
             nest_asyncio.apply()
@@ -480,7 +537,6 @@ async def process_video(task_id: str, video_path: str, mode: str, target_lang: s
                     if combine_video_audio(video_path, merged_audio, output_local):
                         db_update(task_id, Status.UPLOADING, 92, "رفع الفيديو...", "UPLOADING")
                         
-                        # Upload and get PUBLIC URL
                         video_url = upload_to_storage(
                             output_local,
                             "videos",
@@ -559,13 +615,15 @@ def download(task_id: str, file_type: Literal["video", "srt"]):
 
 @app.on_event("startup")
 async def startup():
-    print("🚀 Arab Dubbing API v6.1")
-    print(f"🧠 STT: Groq Whisper")
-    print(f"🔊 TTS: Edge-TTS (reliable)")
+    print("🚀 Arab Dubbing API v6.2")
+    print(f"🧠 STT: Groq Whisper Large-v3")
+    print(f"🎙️ TTS: Gemini 2.5 Flash (+ Edge Fallback)")
     print(f"💾 Storage: Supabase (with retry)")
     
     if not GROQ_API_KEY:
         print("⚠️ GROQ_API_KEY missing!")
+    if not GEMINI_API_KEY:
+        print("⚠️ GEMINI_API_KEY missing - will use Edge-TTS only")
     if not SUPABASE_URL:
         print("⚠️ SUPABASE_URL missing!")
     

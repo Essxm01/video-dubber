@@ -28,9 +28,40 @@ interface ProcessResponse {
     thumbnail?: string;
     original_text?: string;
     translated_text?: string;
+    // Support ALL possible video URL keys from backend
     dubbed_video_url?: string;
+    translated_video_url?: string;
+    output_video_url?: string;
+    video_url?: string;
+    url?: string;
+    // SRT
     srt_url?: string;
+    subtitle_url?: string;
+    // Other fields
+    mode?: string;
+    detected_language?: string;
+    segments_count?: number;
   };
+}
+
+/**
+ * Normalize video URL from result - handles different key names
+ */
+function normalizeVideoUrl(result: ProcessResponse['result']): string | undefined {
+  if (!result) return undefined;
+  return result.dubbed_video_url
+    || result.translated_video_url
+    || result.output_video_url
+    || result.video_url
+    || result.url;
+}
+
+/**
+ * Normalize SRT URL from result - handles different key names
+ */
+function normalizeSrtUrl(result: ProcessResponse['result']): string | undefined {
+  if (!result) return undefined;
+  return result.srt_url || result.subtitle_url;
 }
 
 /**
@@ -147,6 +178,23 @@ export async function getTaskStatus(taskId: string): Promise<{
 
     const data: ProcessResponse = await response.json();
 
+    // Normalize the result to ensure consistent video URL key
+    let normalizedResult = data.result;
+    if (data.result) {
+      const videoUrl = normalizeVideoUrl(data.result);
+      const srtUrl = normalizeSrtUrl(data.result);
+
+      // Create normalized result with consistent key names
+      normalizedResult = {
+        ...data.result,
+        dubbed_video_url: videoUrl,  // Always use this key
+        srt_url: srtUrl,  // Always use this key
+      };
+
+      console.log('📹 Video URL:', videoUrl);
+      console.log('📄 SRT URL:', srtUrl);
+    }
+
     return {
       status: {
         taskId: data.task_id,
@@ -156,7 +204,7 @@ export async function getTaskStatus(taskId: string): Promise<{
       },
       completed: data.status === 'COMPLETED',
       failed: data.status === 'FAILED',
-      result: data.result,
+      result: normalizedResult,
     };
   } catch (error) {
     console.error('Status polling error:', error);
@@ -173,11 +221,22 @@ export function getDownloadUrl(taskId: string, fileType: 'video' | 'audio' | 'sr
 
 /**
  * Get static file URL (for streaming video)
+ * Handles: Supabase public URLs, local /output/ paths, and relative paths
  */
 export function getOutputUrl(path: string): string {
+  if (!path) return '';
+
+  // Already a full URL (Supabase public URL)
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
+  // Local output path
   if (path.startsWith('/output/')) {
     return `${BACKEND_URL}${path}`;
   }
+
+  // Relative path
   return `${BACKEND_URL}/output/${path}`;
 }
 
