@@ -43,12 +43,16 @@ function mapStatusToStage(status: string): ProcessingStage {
 export const uploadVideo = async (
   file: File,
   mode: ServiceMode,
-  targetLanguage: string = 'ar'
+  targetLanguage: string = 'ar',
+  voice: string = 'female',  // NEW: Voice selection
+  generateSrt: boolean = true  // NEW: SRT generation
 ): Promise<{ taskId: string; success: boolean; error?: string }> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('mode', mode);
   formData.append('target_lang', targetLanguage);
+  formData.append('voice', voice);
+  formData.append('generate_srt_file', generateSrt ? 'true' : 'false');
 
   try {
     const response = await axios.post<TaskResponse>(`${API_BASE_URL}/upload`, formData, {
@@ -153,4 +157,5 @@ export const startRealProcessing = (
 };
 
 // Export for backward compatibility
-export { ServiceMode } from '../types';
+export type { ServiceMode } from '../types';
+
