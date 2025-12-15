@@ -1,12 +1,11 @@
 import axios from 'axios';
+import { ProcessingStage, TaskStatus, ServiceMode } from '../types';
 
 // ✅ LIVE RENDER BACKEND
 export const API_BASE_URL = 'https://video-dubber-5zuo.onrender.com';
-// Alias for App.tsx compatibility
 export const BACKEND_URL = API_BASE_URL;
 
-export type ServiceMode = 'DUBBING' | 'TRANSLATION' | 'SUBTITLES';
-
+// --- Interfaces ---
 export interface TaskResponse {
   task_id: string;
   status: string;
@@ -19,9 +18,33 @@ export interface TaskResponse {
   };
 }
 
-// --- CORE FUNCTIONS ---
+// --- Helper: Map backend status to ProcessingStage ---
+function mapStatusToStage(status: string): ProcessingStage {
+  const map: Record<string, ProcessingStage> = {
+    'PENDING': ProcessingStage.DOWNLOAD,
+    'EXTRACTING': ProcessingStage.DOWNLOAD,
+    'TRANSCRIBING': ProcessingStage.TRANSCRIPTION,
+    'TRANSLATING': ProcessingStage.TRANSLATION,
+    'GENERATING_AUDIO': ProcessingStage.VOICE_GENERATION,
+    'MERGING': ProcessingStage.SYNCING,
+    'UPLOADING': ProcessingStage.SYNCING,
+    'COMPLETED': ProcessingStage.FINALIZING,
+    'FAILED': ProcessingStage.DOWNLOAD,
+  };
+  return map[status] || ProcessingStage.DOWNLOAD;
+}
 
-export const uploadVideo = async (file: File, mode: ServiceMode, targetLanguage: string = 'ar') => {
+// --- Core Functions ---
+
+/**
+ * Upload video file for processing
+ * Returns: { taskId, success, error }
+ */
+export const uploadVideo = async (
+  file: File,
+  mode: ServiceMode,
+  targetLanguage: string = 'ar'
+): Promise<{ taskId: string; success: boolean; error?: string }> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('mode', mode);
@@ -29,46 +52,105 @@ export const uploadVideo = async (file: File, mode: ServiceMode, targetLanguage:
 
   try {
     const response = await axios.post<TaskResponse>(`${API_BASE_URL}/upload`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000, // 60s timeout for upload
     });
-    return response.data;
-  } catch (error) {
+
+    return {
+      taskId: response.data.task_id,
+      success: true
+    };
+  } catch (error: any) {
     console.error("Upload Error:", error);
-    throw error;
+    const errorMsg = error.response?.data?.detail || error.message || 'فشل رفع الملف';
+    return {
+      taskId: '',
+      success: false,
+      error: errorMsg
+    };
   }
 };
 
-export const checkStatus = async (taskId: string) => {
+/**
+ * Get task status with completed/failed flags
+ * Returns: { status, completed, failed, result }
+ */
+export const getTaskStatus = async (taskId: string): Promise<{
+  status: TaskStatus;
+  completed: boolean;
+  failed: boolean;
+  result?: TaskResponse['result'];
+}> => {
   try {
     const response = await axios.get<TaskResponse>(`${API_BASE_URL}/status/${taskId}`);
-    return response.data;
+    const data = response.data;
+
+    const status: TaskStatus = {
+      taskId: taskId,
+      progress: data.progress || 0,
+      stage: mapStatusToStage(data.status),
+      message: data.message || ''
+    };
+
+    return {
+      status,
+      completed: data.status === 'COMPLETED',
+      failed: data.status === 'FAILED',
+      result: data.result
+    };
   } catch (error) {
     console.error("Status Check Error:", error);
-    throw error;
+    return {
+      status: { taskId, progress: 0, stage: ProcessingStage.DOWNLOAD, message: 'خطأ في الاتصال' },
+      completed: false,
+      failed: true,
+      result: undefined
+    };
   }
 };
 
-// ✅ FIX: Alias for App.tsx compatibility (App calls it getTaskStatus)
-export const getTaskStatus = checkStatus;
+// Alias for backward compatibility
+export const checkStatus = getTaskStatus;
 
-// ✅ FIX: Mock Health Check for App.tsx
-export const checkBackendHealth = async () => {
+/**
+ * Check if backend is healthy
+ */
+export const checkBackendHealth = async (): Promise<boolean> => {
   try {
-    await axios.get(API_BASE_URL);
-    return true;
+    const response = await axios.get(`${API_BASE_URL}/health`, { timeout: 5000 });
+    return response.status === 200;
   } catch {
-    return true; // Return true anyway to prevent UI blocking
+    // Try root endpoint as fallback
+    try {
+      await axios.get(API_BASE_URL, { timeout: 5000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 };
 
-export const startRealProcessing = async (videoUrl: string, mode: ServiceMode, targetLanguage: string = 'ar') => {
-  try {
-    console.warn("YouTube URL processing via backend is under development.");
-    return null;
-  } catch (error) {
-    console.error("Processing Error:", error);
-    throw error;
-  }
+/**
+ * Start real processing for YouTube URLs
+ * NOTE: Currently returns cleanup function that polls for status
+ */
+export const startRealProcessing = (
+  videoUrl: string,
+  mode: ServiceMode,
+  onUpdate: (status: TaskStatus) => void,
+  onComplete: (result?: TaskResponse['result']) => void,
+  onError: (msg: string) => void,
+  targetLang: string = 'ar'
+): (() => void) => {
+  // For now, YouTube processing is not implemented
+  // Show error immediately
+  setTimeout(() => {
+    onError('معالجة روابط يوتيوب غير متاحة حالياً. الرجاء رفع الفيديو مباشرة.');
+  }, 100);
+
+  // Return empty cleanup function
+  return () => { };
 };
+
+// Export for backward compatibility
+export { ServiceMode } from '../types';
