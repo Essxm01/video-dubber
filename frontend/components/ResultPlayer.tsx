@@ -1,510 +1,164 @@
-
-import React, { useState, useRef, useEffect } from 'react';
-import { Download, Share2, Wand2, Play, Pause, Volume2, VolumeX, Maximize, Minimize, RefreshCw, Loader2, Captions } from 'lucide-react';
+import React, { useRef, useEffect } from 'react';
+import { Download, RefreshCw, Play, Pause, Volume2, Maximize } from 'lucide-react';
 import { Button } from './Button';
 import { VideoMetadata } from '../types';
-import { getOutputUrl, getDownloadUrl, BACKEND_URL } from '../services/apiService';
 
 interface ResultPlayerProps {
   metadata: VideoMetadata | null;
   onReset: () => void;
   t: any;
-  taskId?: string;
-  result?: {
-    dubbed_video_url?: string;
-    srt_url?: string;
-    title?: string;
-    thumbnail?: string;
-  };
 }
 
-// Helper to extract YouTube ID
-const getYoutubeId = (url: string) => {
-  if (!url) return null;
-  // Regex to capture video ID from standard links, shorts, and embeds
-  const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[7].length >= 11) ? match[7] : null;
-};
-
-// Helper to format time (seconds -> mm:ss)
-const formatTime = (time: number) => {
-  if (isNaN(time)) return "00:00";
-  const minutes = Math.floor(time / 60);
-  const seconds = Math.floor(time % 60);
-  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-};
-
-// Simulated download
-const downloadMockFile = (filename: string, content: string, mimeType: string) => {
-  const blob = new Blob([content], { type: mimeType });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
-};
-
-const MOCK_SRT_CONTENT = `1
-00:00:01,000 --> 00:00:06,000
-ترجمة تجريبية للفيديو
-
-2
-00:00:06,500 --> 00:00:12,000
-تمت المعالجة بواسطة دبلجة العرب`;
-
-export const ResultPlayer: React.FC<ResultPlayerProps> = ({ metadata, onReset, t, taskId, result }) => {
-  const mode = metadata?.mode || 'BOTH';
-
-  // Determine video source - ONLY use real backend URL, no fallback to mock!
-  const hasRealVideo = result?.dubbed_video_url && result.dubbed_video_url.length > 0;
-  const hasSRT = result?.srt_url && result.srt_url.length > 0;
-
-  // Get the actual video URL
-  const videoSource = hasRealVideo ? getOutputUrl(result.dubbed_video_url!) : null;
-
-  // If mode is DUBBING or BOTH but no video URL, show error
-  const videoMissing = (mode === 'DUBBING' || mode === 'BOTH') && !hasRealVideo;
-  // If mode is SUBTITLES but no SRT URL, show error
-  const srtMissing = mode === 'SUBTITLES' && !hasSRT;
-
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showControls, setShowControls] = useState(true);
-  const [videoError, setVideoError] = useState(false);
-
-  // Subtitle State
-  const [showSubtitles, setShowSubtitles] = useState(mode === 'SUBTITLES' || mode === 'BOTH');
-  const [vttUrl, setVttUrl] = useState<string | null>(null);
-
+export function ResultPlayer({ metadata, onReset, t }: ResultPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const videoId = metadata?.url ? getYoutubeId(metadata.url) : null;
-  const thumbnailUrl = result?.thumbnail
-    ? result.thumbnail
-    : videoId
-      ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
-      : (metadata?.thumbnail || "https://picsum.photos/800/450");
+  if (!metadata) return null;
 
-  // Generate VTT Blob on mount
+  // Helper to check if it's a direct file (MP4) or YouTube
+  const isDirectFile = (url: string) => {
+    return url.includes('supabase.co') || url.endsWith('.mp4') || url.startsWith('blob:');
+  };
+
+  const isYouTube = (url: string) => {
+    return url.includes('youtube.com') || url.includes('youtu.be');
+  };
+
+  // Extract YouTube ID if needed
+  const getYouTubeId = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
   useEffect(() => {
-    const summary = metadata?.smartSummary || "شرح توضيحي لمحتوى الفيديو";
-    // Create a simple WebVTT content
-    const vttContent = `WEBVTT
-
-00:00:01.000 --> 00:00:06.000
-${summary}
-
-00:00:06.500 --> 00:00:12.000
-تمت الترجمة والدبلجة بواسطة منصة دبلجني للذكاء الاصطناعي
-
-00:00:12.500 --> 00:00:20.000
-نقدم لكم تجربة مشاهدة ممتعة مع دقة عالية في الترجمة`;
-
-    const blob = new Blob([vttContent], { type: 'text/vtt' });
-    const url = URL.createObjectURL(blob);
-    setVttUrl(url);
-
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [metadata]);
-
-  // Sync state with text track mode
-  useEffect(() => {
-    if (videoRef.current && videoRef.current.textTracks && videoRef.current.textTracks[0]) {
-      videoRef.current.textTracks[0].mode = showSubtitles ? 'showing' : 'hidden';
+    // Force reload video source when URL changes
+    if (videoRef.current && isDirectFile(metadata.url)) {
+      videoRef.current.load();
     }
-  }, [showSubtitles, vttUrl]);
+  }, [metadata.url]);
 
-
-  // --- Video Event Handlers ---
-
-  const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      setDuration(videoRef.current.duration);
-      // Ensure subtitles respect initial state
-      if (videoRef.current.textTracks && videoRef.current.textTracks[0]) {
-        videoRef.current.textTracks[0].mode = showSubtitles ? 'showing' : 'hidden';
-      }
-    }
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
-  };
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVolume = parseFloat(e.target.value);
-    setVolume(newVolume);
-    if (videoRef.current) {
-      videoRef.current.volume = newVolume;
-      setIsMuted(newVolume === 0);
-    }
-  };
-
-  const toggleMute = () => {
-    if (videoRef.current) {
-      const newMutedState = !isMuted;
-      setIsMuted(newMutedState);
-      videoRef.current.muted = newMutedState;
-      if (newMutedState) {
-        setVolume(0);
-      } else {
-        setVolume(1);
-        videoRef.current.volume = 1;
-      }
-    }
-  };
-
-  const toggleSubtitles = () => {
-    setShowSubtitles(!showSubtitles);
-  };
-
-  const toggleFullscreen = () => {
-    if (!playerContainerRef.current) return;
-
-    if (!document.fullscreenElement) {
-      playerContainerRef.current.requestFullscreen().catch(err => {
-        console.error(`Error attempting to enable fullscreen: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
-    }
-  };
-
-  // Listen for fullscreen changes to update state
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
-
-  // Auto-hide controls
-  const handleMouseMove = () => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (isPlaying) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, 2500);
-    }
-  };
-
-  const handleVideoEnded = () => {
-    setIsPlaying(false);
-    setShowControls(true);
-  };
-
-  // --- Download Logic ---
-  const handleDownload = (type: 'mp4' | 'wav' | 'srt') => {
-    const timestamp = new Date().toISOString().split('T')[0];
-    const safeTitle = metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'video';
-
-    if (type === 'mp4') {
-      // Use real backend URL if taskId exists
-      if (taskId) {
-        window.open(getDownloadUrl(taskId, 'video'), '_blank');
-      } else if (result?.dubbed_video_url) {
-        window.open(getOutputUrl(result.dubbed_video_url), '_blank');
-      } else {
-        downloadMockFile(`${safeTitle}_final_${timestamp}.mp4`, 'Mock Video Content', 'video/mp4');
-      }
-    } else if (type === 'wav') {
-      if (taskId) {
-        window.open(getDownloadUrl(taskId, 'audio'), '_blank');
-      } else {
-        downloadMockFile(`${safeTitle}_audio_${timestamp}.wav`, 'Mock Audio Content', 'audio/wav');
-      }
-    } else if (type === 'srt') {
-      if (taskId) {
-        window.open(getDownloadUrl(taskId, 'srt'), '_blank');
-      } else if (result?.srt_url) {
-        window.open(getOutputUrl(result.srt_url), '_blank');
-      } else {
-        const srtContent = `1\n00:00:01,000 --> 00:00:06,000\n${metadata?.smartSummary || 'ترجمة تجريبية للفيديو'}\n\n2\n00:00:06,500 --> 00:00:12,000\nتمت المعالجة بواسطة دبلجة العرب`;
-        downloadMockFile(`${safeTitle}_subs_${timestamp}.srt`, srtContent, 'text/plain');
-      }
+  const handleDownload = async (type: 'video' | 'audio') => {
+    if (!metadata.url) return;
+    
+    try {
+      // Create a temporary anchor tag to force download
+      const link = document.createElement('a');
+      link.href = metadata.url;
+      link.download = `dubbed_video_${Date.now()}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      console.error("Download failed", e);
+      window.open(metadata.url, '_blank');
     }
   };
 
   return (
-    <div className="w-full max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
-
-      <div className="mb-8 text-center">
+    <div className="w-full max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
+      
+      {/* Header Section */}
+      <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center p-3 bg-green-100 dark:bg-green-500/10 rounded-full mb-4">
-          <Wand2 className="w-8 h-8 text-green-600 dark:text-green-400" />
+          <Play className="w-8 h-8 text-green-600 dark:text-green-500 fill-current" />
         </div>
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{t.successTitle}</h2>
-        <p className="text-slate-600 dark:text-slate-400">{t.successDesc}</p>
+        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">
+          {t.successTitle || "تمت العملية بنجاح!"}
+        </h2>
+        <p className="text-slate-600 dark:text-slate-400">
+          {t.successSubtitle || "الفيديو الخاص بك جاهز للمشاهدة والتحميل."}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-        {/* Main Player */}
+        
+        {/* --- VIDEO PLAYER SECTION --- */}
         <div className="lg:col-span-2 space-y-4">
-          <div
-            ref={playerContainerRef}
-            className="relative aspect-video bg-black rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-2xl group select-none"
-            onMouseMove={handleMouseMove}
-            onMouseLeave={() => isPlaying && setShowControls(false)}
-          >
-            {/* Video Player or Error State */}
-            {videoSource ? (
+          <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 ring-1 ring-slate-900/5 group">
+            
+            {/* LOGIC: Show HTML5 Video for Supabase/MP4, Iframe for YouTube */}
+            {isDirectFile(metadata.url) ? (
               <video
-                key={videoSource} // CRITICAL: Force re-render when URL changes
                 ref={videoRef}
                 className="w-full h-full object-contain"
-                poster={thumbnailUrl}
-                src={videoSource}
-                onClick={togglePlay}
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onEnded={handleVideoEnded}
-                onError={() => setVideoError(true)}
-                crossOrigin="anonymous"
                 controls
+                autoPlay
                 playsInline
-                preload="metadata"
+                poster={metadata.thumbnail}
               >
-                {vttUrl && <track kind="subtitles" src={vttUrl} srcLang="ar" label="Arabic" default={showSubtitles} />}
+                <source src={metadata.url} type="video/mp4" />
+                Your browser does not support the video tag.
               </video>
+            ) : isYouTube(metadata.url) ? (
+              <iframe
+                className="w-full h-full"
+                src={`https://www.youtube.com/embed/${getYouTubeId(metadata.url)}?autoplay=1`}
+                title="YouTube video player"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              ></iframe>
             ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900 text-white p-8">
-                {mode === 'SUBTITLES' ? (
-                  <>
-                    <div className="text-6xl mb-4">📄</div>
-                    <h3 className="text-xl font-bold mb-2">ملف الترجمة جاهز!</h3>
-                    <p className="text-slate-400 text-center mb-4">اضغط على "ملف الترجمة (SRT)" للتحميل</p>
-                  </>
-                ) : videoError ? (
-                  <>
-                    <div className="text-6xl mb-4">⚠️</div>
-                    <h3 className="text-xl font-bold mb-2">خطأ في تشغيل الفيديو</h3>
-                    <p className="text-slate-400 text-center mb-4">المتصفح لا يدعم تشغيل هذا الفيديو مباشرة</p>
-                    {hasRealVideo && (
-                      <a
-                        href={videoSource || ''}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-medium transition-colors"
-                      >
-                        🔗 افتح الفيديو في نافذة جديدة
-                      </a>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="text-6xl mb-4">⚠️</div>
-                    <h3 className="text-xl font-bold mb-2">الفيديو غير متوفر</h3>
-                    <p className="text-slate-400 text-center">حدث خطأ أثناء معالجة الفيديو. جرب مرة أخرى.</p>
-                  </>
-                )}
+              // Fallback for uploaded local files before processing
+              <div className="w-full h-full flex items-center justify-center text-white">
+                <p>Preview not available</p>
               </div>
             )}
 
-            {/* Big Center Play Button (Visible when paused or buffering) */}
-            {!isPlaying && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] transition-all duration-300">
-                <button
-                  onClick={togglePlay}
-                  className="w-20 h-20 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center border border-white/40 shadow-2xl transform hover:scale-110 transition-all group-hover:shadow-indigo-500/40"
-                  aria-label="Play Video"
-                >
-                  <Play className="w-8 h-8 text-white ml-1 fill-white" />
-                </button>
-              </div>
-            )}
-
-            {/* Mode Badge */}
-            <div className="absolute top-4 left-4 z-10 pointer-events-none">
-              <div className="bg-black/60 backdrop-blur-md text-white px-3 py-1 rounded-lg text-xs font-bold border border-white/10 shadow-lg">
-                {mode === 'DUBBING' ? t.modeDubbing : mode === 'SUBTITLES' ? t.modeSubtitles : t.modeBoth}
-              </div>
-            </div>
-
-            {/* Custom Control Bar - FORCED LTR */}
-            <div
-              dir="ltr"
-              className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}
-            >
-              {/* Progress Bar */}
-              <div dir="ltr" className="relative group/seeker h-1.5 mb-4 cursor-pointer">
-                <div className="absolute inset-0 bg-white/30 rounded-full"></div>
-                <div
-                  className="absolute top-0 left-0 h-full bg-indigo-500 rounded-full"
-                  style={{ width: `${(currentTime / duration) * 100}%` }}
-                ></div>
-                <input
-                  type="range"
-                  min="0"
-                  max={duration || 100}
-                  value={currentTime}
-                  onChange={handleSeek}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {/* Play/Pause Small */}
-                  <button onClick={togglePlay} className="text-white hover:text-indigo-400 transition-colors">
-                    {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current" />}
-                  </button>
-
-                  {/* Volume */}
-                  <div dir="ltr" className="flex items-center gap-2 group/volume">
-                    <button onClick={toggleMute} className="text-white hover:text-indigo-400 transition-colors">
-                      {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                    </button>
-                    <div className="w-0 overflow-hidden group-hover/volume:w-20 transition-all duration-300 ease-in-out">
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.1"
-                        value={isMuted ? 0 : volume}
-                        onChange={handleVolumeChange}
-                        className="w-20 h-1 accent-indigo-500"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Time Display */}
-                  <span dir="ltr" className="text-white text-xs font-mono font-medium opacity-90">
-                    {formatTime(currentTime)} / {formatTime(duration)}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {/* Subtitles Toggle */}
-                  <button
-                    onClick={toggleSubtitles}
-                    className={`transition-colors ${showSubtitles ? 'text-indigo-400' : 'text-white hover:text-indigo-400'}`}
-                    title="Toggle Subtitles"
-                  >
-                    <Captions className="w-5 h-5" />
-                  </button>
-
-                  <button onClick={toggleFullscreen} className="text-white hover:text-indigo-400 transition-colors">
-                    {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
+            {/* Title Overlay */}
+            <div className="absolute top-4 left-4 right-4 flex justify-between items-start z-10 pointer-events-none">
+               <span className="px-3 py-1 bg-black/60 backdrop-blur-md text-white text-xs font-medium rounded-lg border border-white/10">
+                 {metadata.mode || "DUBBING"}
+               </span>
             </div>
           </div>
-
-          <div className="bg-white dark:bg-slate-800/50 rounded-xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 leading-tight">{metadata?.title}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">{metadata?.smartSummary}</p>
-              </div>
-            </div>
-
-            {/* Fallback Direct Link */}
-            {videoSource && (
-              <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                <a
-                  href={videoSource}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium transition-colors"
-                >
-                  🔗 مشكلة في التشغيل؟ شاهد مباشرة هنا
-                </a>
-              </div>
-            )}
+          
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 flex items-center justify-between">
+             <div className="font-medium truncate pr-4 text-slate-900 dark:text-white" dir="auto">
+               {metadata.title}
+             </div>
+             <div className="text-xs font-mono text-slate-500 bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded">
+               MP4
+             </div>
           </div>
         </div>
 
-        {/* Sidebar Actions */}
-        <div className="space-y-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-lg h-full flex flex-col">
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+        {/* --- ACTIONS SECTION --- */}
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm h-full flex flex-col justify-center">
+            <h3 className="font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
               <Download className="w-5 h-5 text-indigo-500" />
-              {t.exportOptions}
+              {t.downloadOptions || "خيارات التحميل"}
             </h3>
-
-            <div className="space-y-4 flex-1">
-              <Button
-                variant="primary"
-                className="w-full justify-between group h-14"
-                icon={<Download className="w-5 h-5 group-hover:translate-y-0.5 transition-transform" />}
-                onClick={() => handleDownload('mp4')}
+            
+            <div className="space-y-3">
+              <button 
+                onClick={() => handleDownload('video')}
+                className="w-full flex items-center justify-between p-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-lg shadow-indigo-500/20 group"
               >
-                <span>{t.downloadVideo}</span>
-                <span className="text-xs font-bold bg-white/20 px-2 py-0.5 rounded text-white">HD</span>
-              </Button>
-
-              {/* Show Audio only if Dubbing or Both was selected */}
-              {(mode === 'DUBBING' || mode === 'BOTH') && (
-                <Button
-                  variant="secondary"
-                  className="w-full justify-between h-12"
-                  icon={<Volume2 className="w-5 h-5" />}
-                  onClick={() => handleDownload('wav')}
-                >
-                  <span>{t.downloadAudio}</span>
-                  <span className="text-xs bg-slate-200 dark:bg-slate-600 px-2 py-0.5 rounded">WAV</span>
-                </Button>
-              )}
-
-              {/* Show SRT only if Subtitles or Both was selected */}
-              {(mode === 'SUBTITLES' || mode === 'BOTH') && (
-                <Button
-                  variant="outline"
-                  className="w-full justify-between h-12"
-                  icon={<Share2 className="w-5 h-5" />}
-                  onClick={() => handleDownload('srt')}
-                >
-                  <span>{t.downloadSub}</span>
-                  <span className="text-xs bg-indigo-5 dark:bg-indigo-900/50 px-2 py-0.5 rounded">SRT</span>
-                </Button>
-              )}
-            </div>
-
-            <div className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-700 space-y-4">
-              <button
-                onClick={onReset}
-                className="w-full py-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 hover:text-indigo-600 hover:border-indigo-500 dark:hover:text-indigo-400 dark:hover:border-indigo-400 transition-all font-medium flex items-center justify-center gap-2"
+                <span className="font-bold">{t.downloadVideo || "تحميل الفيديو (MP4)"}</span>
+                <span className="bg-white/20 px-2 py-0.5 rounded text-xs">HD</span>
+              </button>
+              
+              <button 
+                onClick={() => window.open(metadata.url, '_blank')}
+                className="w-full flex items-center justify-between p-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-900 dark:text-white rounded-xl transition-colors border border-slate-200 dark:border-slate-600"
               >
-                <RefreshCw className="w-4 h-4" />
-                {t.dubAnother}
+                <span className="font-medium">{t.downloadAudio || "فتح في نافذة جديدة"}</span>
+                <Volume2 className="w-4 h-4 opacity-50" />
               </button>
             </div>
+
+            <div className="my-6 border-t border-slate-100 dark:border-slate-700"></div>
+
+            <Button 
+              variant="outline" 
+              onClick={onReset}
+              className="w-full py-6 border-dashed border-2 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+            >
+              <RefreshCw className="w-4 h-4 mx-2" />
+              {t.processNewVideo || "معالجة فيديو آخر"}
+            </Button>
           </div>
         </div>
 
