@@ -153,12 +153,14 @@ function App() {
           setTaskStatus(status);
         },
         (result) => {
-          // Success callback
+          // Success callback - UPDATE URL WITH DUBBED VIDEO
           setMetadata(prev => prev ? {
             ...prev,
             title: result?.title || prev.title,
             thumbnail: result?.thumbnail || prev.thumbnail,
+            url: result?.dubbed_video_url || prev.url,
           } : null);
+          console.log('📹 Result URL:', result?.dubbed_video_url);
           setState(ProcessingState.COMPLETED);
           showSuccess(lang === 'ar' ? 'تمت الدبلجة بنجاح! 🎉' : 'Dubbing completed! 🎉');
 
@@ -252,11 +254,14 @@ function App() {
 
           if (completed) {
             clearInterval(pollInterval);
+            // UPDATE URL WITH DUBBED VIDEO
             setMetadata(prev => prev ? {
               ...prev,
               title: result?.title || prev.title,
               thumbnail: result?.thumbnail || prev.thumbnail,
+              url: result?.dubbed_video_url || prev.url,
             } : null);
+            console.log('📹 Result URL:', result?.dubbed_video_url);
             setState(ProcessingState.COMPLETED);
             showSuccess(lang === 'ar' ? 'تمت الدبلجة بنجاح! 🎉' : 'Dubbing completed! 🎉');
             setUploadedFile(null);
