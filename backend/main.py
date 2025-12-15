@@ -371,7 +371,7 @@ async def upload(
     target_lang: str = Form("ar"),
     voice: str = Form("female"),
     generate_srt_file: str = Form("true"),
-    bg_audio_volume: str = Form("0.1")  # NEW: Background audio volume (0-1)
+    bg_audio_volume: str = Form("0")  # Background audio OFF by default
 ):
     task_id = str(uuid.uuid4())
     
