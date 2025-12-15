@@ -233,9 +233,12 @@ def translate_text(text: str, src: str = "en", tgt: str = "ar") -> str:
         return text
     try:
         import argostranslate.translate
-        return argostranslate.translate.translate(text, src, tgt)
-    except:
-        return text
+        translated = argostranslate.translate.translate(text, src, tgt)
+        print(f"🌐 Translated [{src}->{tgt}]: {text[:30]}... -> {translated[:30]}...")
+        return translated
+    except Exception as e:
+        print(f"⚠️ Translation failed ({src}->{tgt}): {e}")
+        return text  # Return original if translation fails
 
 # ============= TTS: GEMINI 2.5 PRIMARY + EDGE-TTS FALLBACK =============
 
