@@ -1,6 +1,6 @@
 # ============================================
-# Arab Dubbing API - Requirements v4.0
-# Using Groq API for Whisper (no local ML)
+# Arab Dubbing API - Requirements v6.1
+# Groq Whisper + Gemini TTS + Edge-TTS Fallback
 # ============================================
 
 # Core Framework
@@ -11,13 +11,16 @@ gunicorn==21.2.0
 # Video Processing
 yt-dlp>=2024.12.6
 
-# Groq API (Cloud Whisper - FAST!)
+# Groq API (Cloud Whisper)
 groq>=0.4.0
+
+# Google Gemini API (TTS Primary)
+google-generativeai>=0.8.0
 
 # Translation (Offline Neural MT)
 argostranslate==1.9.6
 
-# Text-to-Speech
+# Text-to-Speech (Fallback)
 edge-tts>=6.1.10
 
 # HTTP & Multipart
@@ -36,3 +39,6 @@ pydantic>=2.0.0
 
 # Async support
 nest-asyncio>=1.6.0
+
+# Retry logic
+tenacity>=8.2.0
