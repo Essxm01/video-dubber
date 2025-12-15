@@ -284,6 +284,7 @@ ${summary}
             {/* Video Player or Error State */}
             {videoSource ? (
               <video
+                key={videoSource} // CRITICAL: Force re-render when URL changes
                 ref={videoRef}
                 className="w-full h-full object-contain"
                 poster={thumbnailUrl}
@@ -294,6 +295,9 @@ ${summary}
                 onEnded={handleVideoEnded}
                 onError={() => setVideoError(true)}
                 crossOrigin="anonymous"
+                controls
+                playsInline
+                preload="metadata"
               >
                 {vttUrl && <track kind="subtitles" src={vttUrl} srcLang="ar" label="Arabic" default={showSubtitles} />}
               </video>
@@ -304,6 +308,22 @@ ${summary}
                     <div className="text-6xl mb-4">📄</div>
                     <h3 className="text-xl font-bold mb-2">ملف الترجمة جاهز!</h3>
                     <p className="text-slate-400 text-center mb-4">اضغط على "ملف الترجمة (SRT)" للتحميل</p>
+                  </>
+                ) : videoError ? (
+                  <>
+                    <div className="text-6xl mb-4">⚠️</div>
+                    <h3 className="text-xl font-bold mb-2">خطأ في تشغيل الفيديو</h3>
+                    <p className="text-slate-400 text-center mb-4">المتصفح لا يدعم تشغيل هذا الفيديو مباشرة</p>
+                    {hasRealVideo && (
+                      <a
+                        href={videoSource || ''}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-medium transition-colors"
+                      >
+                        🔗 افتح الفيديو في نافذة جديدة
+                      </a>
+                    )}
                   </>
                 ) : (
                   <>
@@ -413,6 +433,20 @@ ${summary}
                 <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">{metadata?.smartSummary}</p>
               </div>
             </div>
+
+            {/* Fallback Direct Link */}
+            {videoSource && (
+              <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                <a
+                  href={videoSource}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium transition-colors"
+                >
+                  🔗 مشكلة في التشغيل؟ شاهد مباشرة هنا
+                </a>
+              </div>
+            )}
           </div>
         </div>
 
