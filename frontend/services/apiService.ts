@@ -5,8 +5,13 @@
 
 import { ProcessingStage, TaskStatus, ServiceMode } from '../types';
 
-// Backend URL - configurable via environment variable
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+// Backend URL - Priority: Env Var > Hardcoded Fallback
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL
+  || import.meta.env.VITE_API_URL
+  || 'https://video-dubber-5zuo.onrender.com';
+
+// Debug log - shows in browser console
+console.log('🔌 API CONNECTING TO:', BACKEND_URL);
 
 // Use mock backend for development when real backend is not available
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_BACKEND === 'true';
