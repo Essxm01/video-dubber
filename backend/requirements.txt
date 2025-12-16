@@ -11,3 +11,5 @@ moviepy
 ffmpeg-python
 deep-translator
 nest_asyncio
+replicate
+requests
