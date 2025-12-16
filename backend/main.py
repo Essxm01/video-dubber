@@ -120,9 +120,15 @@ if GEMINI_API_KEY:
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
-    
     # We prefer the flash model for speed, but fallback to pro/standard if needed
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+    # Update: Prioritizing 'latest' and '2.0' models confirmed to be available in production logs
+    models_to_try = [
+        'gemini-2.0-flash', 
+        'gemini-flash-latest', 
+        'gemini-pro-latest', 
+        'gemini-1.5-flash', 
+        'gemini-1.5-pro'
+    ]
     
     # Try Gemini First
     if GEMINI_API_KEY:
