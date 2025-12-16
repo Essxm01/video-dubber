@@ -170,7 +170,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except: return text
 
-# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
+# 3. TTS (Gemini 2.0 Native Audio with Acting Cues -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
@@ -180,24 +180,27 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         return False
 
     try:
-        print(f"💎 Gemini TTS: Acting out with cues: {text[:15]}...")
-        
-        # Use available models confirmed in logs (2.0 is usually best for native audio)
+        # We parse the text for emotions in the logs just to see
+        print(f"💎 Gemini 2.0 TTS: Directing scene -> {text[:20]}...")
+
+        # USE THE NEW MULTIMODAL MODEL (Gemini 2.0 Flash)
+        # Confirmed available in logs: 'models/gemini-2.0-flash'
         model_name = "gemini-2.0-flash" 
         model = genai.GenerativeModel(model_name)
         
-        # ENGINEERING THE "ACTING" PROMPT
+        # ACTING PROMPT
         prompt = f"""
-        Act as a world-class Egyptian Voice Actor (Voice Over Artist).
-        Your task is to perform the following text in an authentic Egyptian Colloquial (Masri) accent.
+        You are an expert Egyptian Voice Actor. 
+        Generate spoken audio for the provided text.
         
-        CRITICAL ACTING INSTRUCTIONS:
-        1. **Interpret Stage Directions:** You will encounter emotion tags in brackets, such as [excited], [sad], [whispering], [sigh], [laughing].
-        2. **Do NOT Read Tags:** NEVER read the words inside the brackets aloud. They are instructions for your acting style.
-        3. **Apply the Emotion:** If you see [whispering], lower your volume and whisper the following Arabic words. If you see [excited], increase pitch and speed.
-        4. **Natural Flow:** Make the transition between emotions sound natural and human, not robotic.
+        STRICT ACTING RULES:
+        1. **Emotion Tags:** If you see tags like [whispering], [excited], [sigh], [laugh], you MUST perform them, not read them.
+           - Example: "[whispering] اسكت وطّي صوتك" -> Whisper the Arabic text.
+           - Example: "[sigh] ياه، تعبت" -> Make a sighing sound then speak.
+        2. **Accent:** Authentic Egyptian Cairo slang (Masri).
+        3. **Tone:** Natural, conversational, NOT robotic.
         
-        Input Text to Perform:
+        Input Text:
         "{text}"
         """
         
@@ -208,18 +211,24 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             )
         )
         
-        # Save the audio
+        # Write the binary audio data
         with open(path, "wb") as f:
             f.write(response.parts[0].inline_data.data)
             
-        print("✅ Gemini TTS Success! (Acting Cues Applied)")
+        print("✅ Gemini 2.0 Success! (Acting & Emotion Applied)")
         return True
 
     except Exception as e:
-        print(f"⚠️ Gemini TTS Failed: {e}")
+        print(f"⚠️ Gemini 2.0 Audio Failed: {e}")
         
     # Fallback to Edge TTS
-    return generate_tts_edge_fallback(text, path)
+    # Strip brackets for Edge TTS because it can't act
+    clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[angry]", "").replace("[laughing]", "").replace("[sigh]", "")
+    # Remove any other potential bracketed tags
+    import re
+    clean_text = re.sub(r'\[.*?\]', '', clean_text).strip()
+    
+    return generate_tts_edge_fallback(clean_text, path)
 
 def generate_tts_edge_fallback(text: str, path: str) -> bool:
     """Fallback: Edge TTS (Salma voice)"""
