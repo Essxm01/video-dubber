@@ -114,56 +114,52 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         print(f"⚠️ Translation Error: {e}")
         return text
 
-# 3. VOICE GENERATION (Replicate XTTS Dynamic -> Fallback Edge TTS)
-def generate_tts_replicate(text: str, path: str) -> bool:
+# 3. VOICE GENERATION (Google Cloud TTS / Gemini -> Fallback Edge TTS)
+def generate_audio_gemini(text: str, path: str):
     if not text.strip(): return False
     
-    # Try Replicate (High Quality)
-    if REPLICATE_API_TOKEN:
+    # Try Google Cloud TTS (High Quality "Gemini" Voice)
+    if GEMINI_API_KEY:
         try:
-            import replicate
-            print(f"💎 Text: {text[:20]}...")
+            print(f"💎 Google TTS: {text[:20]}...")
+            url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GEMINI_API_KEY}"
             
-            # DYNAMIC VERSION FETCHING:
-            # Instead of hardcoding the hash, we ask Replicate for the latest version.
-            # This prevents "422 Invalid Version" errors when the model is updated.
-            model = replicate.models.get("lucataco/xtts-v2")
-            latest_version = model.versions.list()[0]
-            print(f"🔹 Using latest XTTS version: {latest_version.id[:8]}...")
-
-            output = replicate.run(
-                f"lucataco/xtts-v2:{latest_version.id}",
-                input={
-                    "text": text,
-                    "speaker": "Maysandra",
-                    "language": "ar",
-                    "cleanup_voice": True
-                }
-            )
+            data = {
+                "input": {"text": text},
+                "voice": {"languageCode": "ar-XA", "name": "ar-XA-Wavenet-B"}, # High quality Wavenet
+                "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0}
+            }
             
-            response = requests.get(output)
+            response = requests.post(url, json=data)
+            
             if response.status_code == 200:
-                with open(path, 'wb') as f:
-                    f.write(response.content)
-                print("✅ Replicate Success!")
-                return True
+                audio_content = response.json().get("audioContent")
+                if audio_content:
+                    import base64
+                    with open(path, "wb") as f:
+                        f.write(base64.b64decode(audio_content))
+                    print("✅ Google TTS Success!")
+                    return True
+            else:
+                print(f"⚠️ Google TTS Error: {response.text}")
+                
         except Exception as e:
-            print(f"⚠️ Replicate Failed (Switching to Fallback): {e}")
+            print(f"⚠️ Google TTS Failed: {str(e)}")
 
-    # Fallback: Edge TTS (Free & Stable)
-    return generate_tts_edge(text, path)
+    # Fallback: Edge TTS
+    return generate_tts_edge_fallback(text, path)
 
-def generate_tts_edge(text: str, path: str) -> bool:
+def generate_tts_edge_fallback(text: str, path: str) -> bool:
     """Fallback: Edge TTS (Salma voice)"""
     if not text.strip(): 
         return False
     try:
-        print(f"🗣️ Edge TTS Fallback: {text[:30]}...")
+        print(f"🔄 Edge TTS Fallback: {text[:20]}...")
         cmd = ["edge-tts", "--text", text, "--write-media", path, "--voice", "ar-EG-SalmaNeural", "--rate=-3%"]
         subprocess.run(cmd, check=True, capture_output=True)
         return os.path.exists(path) and os.path.getsize(path) > 100
     except Exception as e:
-        print(f"❌ Edge TTS Failed: {e}")
+        print(f"❌ All TTS Failed: {e}")
         return False
 
 # 4. MERGE (Dubbed audio only, no background)
@@ -263,9 +259,9 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             # 1. Translate
             translated = translate_text(seg["text"], target_lang)
             
-            # 2. TTS (Replicate XTTS → Edge Fallback)
+            # 2. TTS (Google Gemini/Cloud → Edge Fallback)
             tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
-            if generate_tts_replicate(translated, tts_path):
+            if generate_audio_gemini(translated, tts_path):
                 tts_files.append(tts_path)
             
         db_update(task_id, "MERGING", 90, "دمج الفيديو...")

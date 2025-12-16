@@ -11,4 +11,4 @@ ffmpeg-python
 deep-translator
 nest_asyncio
 requests
-replicate
+google-generativeai>=0.7.2
