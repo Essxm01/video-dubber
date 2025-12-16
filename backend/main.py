@@ -17,6 +17,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
 from deep_translator import GoogleTranslator
+from pydub import AudioSegment
+import math
 
 # Load environment variables
 load_dotenv()
@@ -79,6 +81,13 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
 def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
     return subprocess.run(cmd, capture_output=True).returncode == 0
+
+def get_video_duration(video_path: str) -> float:
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return float(result.stdout.strip())
+    except: return 0.0
 
 # --- CORE LOGIC ---
 
@@ -307,6 +316,9 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         db_update(task_id, "EXTRACTING", 10, "استخراج الصوت...")
         extract_audio(video_path, audio_path)
         
+        # Get Video Duration for final sync
+        original_video_duration = get_video_duration(video_path)
+        
         db_update(task_id, "TRANSCRIBING", 20, "تحليل الكلام...")
         segments = smart_transcribe(audio_path)
         
@@ -314,26 +326,84 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             db_update(task_id, "FAILED", 0, "فشل تحليل الكلام")
             return
 
-        tts_files = []
+        # Initialize Master Audio Track (pydub)
+        master_audio = AudioSegment.silent(duration=0)
+        
+        print("⏳ Starting Smart Sync processing...")
         total = len(segments)
         
-        for i, seg in enumerate(segments):
+        for i, segment in enumerate(segments):
             progress = 20 + int((i / total) * 60)
             
             if i % 2 == 0:
-                db_update(task_id, "GENERATING_AUDIO", progress, f"توليد الصوت البشري {i+1}/{total}...")
+                db_update(task_id, "GENERATING_AUDIO", progress, f"توليد الصوت البشري والمزامنة {i+1}/{total}...")
             
             # 1. Translate
-            translated = translate_text(seg["text"], target_lang)
+            translated = translate_text(segment["text"], target_lang)
             
-            # 2. TTS (Google Gemini/Cloud → Edge Fallback)
-            tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
-            if generate_audio_gemini(translated, tts_path):
-                tts_files.append(tts_path)
+            # 2. TTS Generation (Temp File)
+            temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{i}.mp3")
+            generate_audio_gemini(translated, temp_file)
+            
+            # 3. Load Audio Segment
+            start_time_ms = int(segment['start'] * 1000)
+            end_time_ms = int(segment['end'] * 1000)
+            original_duration_ms = end_time_ms - start_time_ms
+            
+            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
+                segment_audio = AudioSegment.from_file(temp_file)
+            else:
+                # If TTS failed, add silence for the duration to maintain sync? 
+                # Or just skip? Better to add silence or keep original?
+                # For now, silence placeholder matching original duration
+                segment_audio = AudioSegment.silent(duration=original_duration_ms)
+
+            # --- SYNCHRONIZATION LOGIC ---
+            
+            # 1. Handle Gaps (Silence before this sentence)
+            current_master_duration = len(master_audio)
+            gap_duration = start_time_ms - current_master_duration
+            
+            if gap_duration > 0:
+                # Add silence to sync with the video start time
+                master_audio += AudioSegment.silent(duration=gap_duration)
+            
+            # 2. Append Audio
+            # Note: If gap_duration is negative (overlap), we just append, which pushes the audio. 
+            # Ideally we might overlap, but appending is safer for clarity.
+            master_audio += segment_audio
+            
+            # Clean up temp file
+            try:
+                os.remove(temp_file)
+            except: pass
+            
+        # Final Padding to match video duration
+        video_duration_ms = int(original_video_duration * 1000)
+        current_total = len(master_audio)
+
+        if current_total < video_duration_ms:
+            master_audio += AudioSegment.silent(duration=video_duration_ms - current_total)
+
+        # Export Final Audio
+        merged_audio_path = os.path.join(AUDIO_FOLDER, f"merged_dubbed_{base}.mp3")
+        master_audio.export(merged_audio_path, format="mp3")
+        print("✅ Smart Audio Timeline created with Synchronization.")
             
         db_update(task_id, "MERGING", 90, "دمج الفيديو...")
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
-        merge_audio_video(video_path, tts_files, output_path)
+        
+        # Merge using FFmpeg (Simple audio replace since we have a full track now)
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", merged_audio_path,
+            "-c:v", "copy",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+            output_path
+        ], check=True)
         
         db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
@@ -344,8 +414,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         try:
             os.remove(video_path)
             os.remove(audio_path)
-            for f in tts_files:
-                if os.path.exists(f): os.remove(f)
+            os.remove(merged_audio_path)
         except: pass
             
     except Exception as e:
