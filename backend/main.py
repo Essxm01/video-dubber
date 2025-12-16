@@ -1,8 +1,9 @@
 """
-Arab Dubbing API - Version 14.0 (Smart Cloud Core)
-- PRIMARY: Replicate (Whisper v3 + XTTS v2) -> Studio Quality
-- FALLBACK: Edge TTS + Groq -> Free & Fast
-- LOGIC: Auto-switch if Replicate fails (Billing/Quota limits)
+Arab Dubbing API - Version 16.0 (Salma Voice Stability)
+- REMOVED: All Replicate logic.
+- IMPROVED: Edge TTS voice changed to 'ar-EG-SalmaNeural' (female voice, often more natural than male voices).
+- ENGINE: Groq (STT) + Gemini (Translation/Slang) + Edge TTS (Salma Voice).
+- STABILITY: Guaranteed to run on Render Free Tier with best available free voice.
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -13,25 +14,23 @@ import os
 import uuid
 import subprocess
 import time
-import requests
-import replicate
 from datetime import datetime
 from dotenv import load_dotenv
 import google.generativeai as genai
+from groq import Groq
 
 load_dotenv()
 
 # Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-app = FastAPI(title="Arab Dubbing API", version="14.0.0")
+app = FastAPI(title="Arab Dubbing API", version="16.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,7 +51,7 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
 @app.get("/health")
 def health():
-    return {"status": "active", "engine": "Hybrid (Cloud/Free)"}
+    return {"status": "active", "engine": "Max Free Stability (Salma Voice)"}
 
 # --- HELPERS ---
 def get_fresh_supabase():
@@ -84,30 +83,12 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
     return subprocess.run(cmd, capture_output=True).returncode == 0
 
-# --- SMART AI LAYERS ---
+# --- CORE LOGIC (FREE TIER) ---
 
-# 1. TRANSCRIPTION (Replicate -> Fallback to Groq)
+# 1. TRANSCRIPTION (Groq - The Fast Free Option)
 def smart_transcribe(audio_path: str):
-    # Try Replicate First (Best Quality)
-    if REPLICATE_API_TOKEN:
-        print("🎙️ Attempting Replicate Whisper (Large-v3)...")
-        try:
-            output = replicate.run(
-                "openai/whisper:4d50797290df275329f2727f9324b90714c4c10425c2763f3394747719632832",
-                input={"audio": open(audio_path, "rb"), "model": "large-v3", "timestamp_granularity": "segment"}
-            )
-            segments = []
-            if 'segments' in output:
-                for seg in output['segments']:
-                    segments.append({"start": seg["start"], "end": seg["end"], "text": seg["text"].strip()})
-            if segments: return segments
-        except Exception as e:
-            print(f"⚠️ Replicate Whisper Failed: {e}")
-
-    # Fallback to Groq (Fast & Free)
-    print("🔄 Falling back to Groq Whisper...")
+    print("🎙️ Using Groq Whisper (Free & Fast)...")
     try:
-        from groq import Groq
         client = Groq(api_key=GROQ_API_KEY)
         with open(audio_path, "rb") as f:
             transcription = client.audio.transcriptions.create(
@@ -119,11 +100,9 @@ def smart_transcribe(audio_path: str):
         if hasattr(transcription, 'segments'):
             for seg in transcription.segments:
                 segments.append({"start": seg["start"], "end": seg["end"], "text": seg["text"].strip()})
-        else:
-            segments.append({"start": 0, "end": 10, "text": transcription.text})
         return segments
     except Exception as e:
-        print(f"❌ Groq Failed: {e}")
+        print(f"❌ Groq Whisper Failed: {e}")
         return []
 
 # 2. TRANSLATION (Gemini Slang)
@@ -132,41 +111,30 @@ def translate_with_gemini(text: str, target_lang: str = "ar") -> str:
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
-        Translate to Egyptian Arabic (Slang/Ammiya). 
-        Make it sound like a real person. Keep it concise.
-        Original: "{text}"
+        Translate this text to **Egyptian Arabic (Slang/Ammiya)**. 
+        Make it conversational and natural. Do NOT be formal.
+        Text: "{text}"
         """
         response = model.generate_content(prompt)
-        return response.text.strip()
-    except: return text
+        result = response.text.strip()
+        print(f"🌐 {text[:20]}... → {result[:20]}...")
+        return result
+    except Exception as e:
+        print(f"⚠️ Gemini Translation Failed: {e}")
+        return text
 
-# 3. VOICE GENERATION (Replicate -> Fallback to Edge)
+# 3. VOICE GENERATION (Edge TTS - Salma Voice)
 def smart_tts_generate(text: str, path: str):
-    if not text.strip(): return
-    
-    # Try Replicate XTTS (Human Quality)
-    if REPLICATE_API_TOKEN:
-        try:
-            # Using 'Male Cal' as base, optimized for Arabic reading
-            output_url = replicate.run(
-                "lucataco/xtts-v2:684bc3855b37866c9c65add50fb7c579e667f7c5279bd28afb79873d93b957fd",
-                input={"text": text, "speaker": "Male Cal", "language": "ar", "cleanup_voice": True, "temperature": 0.7}
-            )
-            if output_url:
-                with open(path, "wb") as f:
-                    f.write(requests.get(output_url).content)
-                return True
-        except Exception as e:
-            print(f"⚠️ Replicate XTTS Failed: {e}")
-
-    # Fallback to Edge TTS (Shakir - High Quality Free)
+    if not text.strip(): return False
     try:
         import edge_tts
-        # Running via subprocess to handle async in sync context safely
-        cmd = ["edge-tts", "--text", text, "--write-media", path, "--voice", "ar-EG-ShakirNeural", "--rate=-5%"]
+        # ✅ SALMA NEURAL VOICE (ar-EG-SalmaNeural) - Most natural female voice
+        cmd = ["edge-tts", "--text", text, "--write-media", path, "--voice", "ar-EG-SalmaNeural", "--rate=-3%"] 
         subprocess.run(cmd, check=True)
         return True
-    except: return False
+    except Exception as e:
+        print(f"❌ TTS Failed: {e}")
+        return False
 
 def merge_audio_video(video_path, audio_files, output_path):
     valid_files = [f for f in audio_files if os.path.exists(f)]
@@ -182,7 +150,7 @@ def merge_audio_video(video_path, audio_files, output_path):
     # Background Ducking (Audio Mixing)
     cmd = [
         "ffmpeg", "-i", video_path, "-i", merged_tts, 
-        "-filter_complex", "[0:a]volume=0.15[bg];[1:a]volume=1.4[fg];[bg][fg]amix=inputs=2:duration=first[a]", 
+        "-filter_complex", "[0:a]volume=0.15[bg];[1:a]volume=1.3[fg];[bg][fg]amix=inputs=2:duration=first[a]", 
         "-map", "0:v", "-map", "[a]", 
         "-c:v", "copy", "-c:a", "aac", 
         "-shortest", "-y", output_path
@@ -221,7 +189,7 @@ async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)
             }).execute()
         except: pass
     
-    db_update(task_id, "PENDING", 0, "Initializing Cloud Engine...")
+    db_update(task_id, "PENDING", 0, "جاري التجهيز...")
     background_tasks.add_task(process_video_task, task_id, path, mode, target_lang, file.filename)
     return TaskResponse(task_id=task_id, status="PENDING")
 
@@ -238,15 +206,14 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         base = task_id[:8]
         audio_path = os.path.join(AUDIO_FOLDER, f"{base}.mp3")
         
-        db_update(task_id, "EXTRACTING", 10, "Extracting Audio...")
+        db_update(task_id, "EXTRACTING", 10, "استخراج الصوت...")
         extract_audio(video_path, audio_path)
         
-        db_update(task_id, "TRANSCRIBING", 20, "Transcribing Audio...")
-        # ✅ Smart Transcribe (Replicate -> Groq)
+        db_update(task_id, "TRANSCRIBING", 20, "تحليل الكلام...")
         segments = smart_transcribe(audio_path)
         
         if not segments:
-             db_update(task_id, "FAILED", 0, "Transcription Failed")
+             db_update(task_id, "FAILED", 0, "فشل تحليل الكلام (قد لا يوجد صوت).")
              return
 
         tts_files = []
@@ -254,24 +221,26 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         
         for i, seg in enumerate(segments):
             progress = 20 + int((i / total) * 60)
-            if i % 2 == 0: db_update(task_id, "GENERATING_AUDIO", progress, f"Dubbing {i+1}/{total}...")
             
-            # 1. Translate (Gemini Slang)
+            if i % 2 == 0:
+                db_update(task_id, "GENERATING_AUDIO", progress, f"دبلجة {i+1}/{total}...")
+            
+            # 1. Translate (Gemini Egyptian Slang)
             translated = translate_with_gemini(seg["text"], target_lang)
             
-            # 2. Generate Voice (Replicate -> Edge)
+            # 2. TTS (Salma Voice)
             tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
             smart_tts_generate(translated, tts_path)
             tts_files.append(tts_path)
             
-        db_update(task_id, "MERGING", 90, "Mixing Final Video...")
+        db_update(task_id, "MERGING", 90, "دمج الصوت الجديد...")
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
         merge_audio_video(video_path, tts_files, output_path)
         
-        db_update(task_id, "UPLOADING", 95, "Uploading Result...")
+        db_update(task_id, "UPLOADING", 95, "رفع النتيجة النهائية...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
         
-        db_update(task_id, "COMPLETED", 100, "Done! 🎉", result={"dubbed_video_url": url, "title": filename})
+        db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
         
         # Cleanup
         try:
@@ -285,7 +254,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         print(f"🔥 FATAL ERROR: {e}")
         import traceback
         traceback.print_exc()
-        db_update(task_id, "FAILED", 0, f"Error: {str(e)[:100]}")
+        db_update(task_id, "FAILED", 0, f"خطأ: {str(e)[:100]}")
 
 if __name__ == "__main__":
     import uvicorn
