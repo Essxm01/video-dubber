@@ -1,6 +1,6 @@
 """
-Arab Dubbing API - Version 18.0 (Replicate XTTS - Human Voice)
-- TTS: Replicate XTTS v2 (Human Quality) → Edge TTS (Fallback)
+Arab Dubbing API - Version 19.0 (Google Cloud TTS / Gemini)
+- TTS: Google Cloud TTS (Neural/Wavenet) → Edge TTS (Fallback)
 - STT: Groq Whisper
 - Translation: Google Translate (fast & reliable)
 """
@@ -13,21 +13,21 @@ import os
 import uuid
 import subprocess
 import requests
-import time
 from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
 from deep_translator import GoogleTranslator
 
+# Load environment variables
 load_dotenv()
 
 # Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Uses Google Cloud TTS API Key
 
-app = FastAPI(title="Arab Dubbing API", version="18.0.0")
+app = FastAPI(title="Arab Dubbing API", version="19.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +48,7 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
 @app.get("/health")
 def health():
-    return {"status": "active", "version": "18.0.0", "tts_engine": "Replicate XTTS (Human Voice)"}
+    return {"status": "active", "version": "19.0.0", "engine": "Groq + Google Cloud TTS (Gemini)"}
 
 # --- HELPERS ---
 def get_fresh_supabase():
@@ -103,7 +103,7 @@ def smart_transcribe(audio_path: str):
         print(f"❌ Groq Failed: {e}")
         return []
 
-# 2. TRANSLATION (Google Translate - Fast & Reliable)
+# 2. TRANSLATION (Google Translate)
 def translate_text(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
     try:
@@ -114,8 +114,8 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         print(f"⚠️ Translation Error: {e}")
         return text
 
-# 3. VOICE GENERATION (Google Cloud TTS / Gemini -> Fallback Edge TTS)
-def generate_audio_gemini(text: str, path: str):
+# 3. TTS (Google Cloud TTS / Gemini -> Fallback Edge TTS)
+def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
     # Try Google Cloud TTS (High Quality "Gemini" Voice)
