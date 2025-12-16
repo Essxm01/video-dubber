@@ -108,6 +108,14 @@ import google.generativeai as genai
 # Configure Gemini for Translation
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+    try:
+        # DEBUG: List available models to check permission/version issues
+        print("🔍 Checking available Gemini models...")
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(f"   - {m.name}")
+    except Exception as e:
+        print(f"⚠️ Failed to list Gemini models: {e}")
 
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
