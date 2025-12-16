@@ -167,39 +167,55 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except: return text
 
-# 3. TTS (Google Cloud TTS / Gemini -> Fallback Edge TTS)
+# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
-    # Try Google Cloud TTS (High Quality "Gemini" Voice)
-    if GEMINI_API_KEY:
-        try:
-            print(f"💎 Google TTS: {text[:20]}...")
-            url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GEMINI_API_KEY}"
-            
-            data = {
-                "input": {"text": text},
-                "voice": {"languageCode": "ar-XA", "name": "ar-XA-Wavenet-B"}, # High quality Wavenet
-                "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0}
-            }
-            
-            response = requests.post(url, json=data)
-            
-            if response.status_code == 200:
-                audio_content = response.json().get("audioContent")
-                if audio_content:
-                    import base64
-                    with open(path, "wb") as f:
-                        f.write(base64.b64decode(audio_content))
-                    print("✅ Google TTS Success!")
-                    return True
-            else:
-                print(f"⚠️ Google TTS Error: {response.text}")
-                
-        except Exception as e:
-            print(f"⚠️ Google TTS Failed: {str(e)}")
+    # Ensure API Key is loaded
+    if not GEMINI_API_KEY:
+        print("⚠️ Gemini Key missing for TTS.")
+        return False
 
-    # Fallback: Edge TTS
+    try:
+        print(f"💎 Gemini TTS: Acting out with cues: {text[:15]}...")
+        
+        # Use available models confirmed in logs (2.0 is usually best for native audio)
+        model_name = "gemini-2.0-flash" 
+        model = genai.GenerativeModel(model_name)
+        
+        # ENGINEERING THE "ACTING" PROMPT
+        prompt = f"""
+        Act as a world-class Egyptian Voice Actor (Voice Over Artist).
+        Your task is to perform the following text in an authentic Egyptian Colloquial (Masri) accent.
+        
+        CRITICAL ACTING INSTRUCTIONS:
+        1. **Interpret Stage Directions:** You will encounter emotion tags in brackets, such as [excited], [sad], [whispering], [sigh], [laughing].
+        2. **Do NOT Read Tags:** NEVER read the words inside the brackets aloud. They are instructions for your acting style.
+        3. **Apply the Emotion:** If you see [whispering], lower your volume and whisper the following Arabic words. If you see [excited], increase pitch and speed.
+        4. **Natural Flow:** Make the transition between emotions sound natural and human, not robotic.
+        
+        Input Text to Perform:
+        "{text}"
+        """
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="audio/mp3"
+            )
+        )
+        
+        # Save the audio
+        with open(path, "wb") as f:
+            f.write(response.parts[0].inline_data.data)
+            
+        print("✅ Gemini TTS Success! (Acting Cues Applied)")
+        return True
+
+    except Exception as e:
+        print(f"⚠️ Gemini TTS Failed: {e}")
+        
+    # Fallback to Edge TTS
     return generate_tts_edge_fallback(text, path)
 
 def generate_tts_edge_fallback(text: str, path: str) -> bool:
