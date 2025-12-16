@@ -114,41 +114,43 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         print(f"⚠️ Translation Error: {e}")
         return text
 
-# 3. TTS (Replicate XTTS v2 → Edge TTS Fallback)
+# 3. VOICE GENERATION (Replicate XTTS Dynamic -> Fallback Edge TTS)
 def generate_tts_replicate(text: str, path: str) -> bool:
-    """Generate human-quality voice using Replicate XTTS v2"""
-    if not text.strip(): 
-        return False
+    if not text.strip(): return False
     
-    if not REPLICATE_API_TOKEN:
-        print("⚠️ No Replicate token, using Edge TTS")
-        return generate_tts_edge(text, path)
-    
-    try:
-        import replicate
-        print(f"💎 Trying Replicate XTTS for: {text[:20]}...")
-        # UPDATED VERSION HASH for lucataco/xtts-v2
-        output = replicate.run(
-            "lucataco/xtts-v2:5c7d5dc6dd8bf7571acaeb8529737411fc09121d30278473e58908f91803d636",
-            input={
-                "text": text,
-                "speaker": "Maysandra",
-                "language": "ar",
-                "cleanup_voice": True
-            }
-        )
-        
-        # Replicate returns a URL, we need to download it
-        response = requests.get(output)
-        if response.status_code == 200:
-            with open(path, 'wb') as f:
-                f.write(response.content)
-            print("✅ Replicate Success!")
-            return True
-    except Exception as e:
-        print(f"⚠️ Replicate Failed (Switching to Fallback): {e}")
-    
-    # Fallback to Edge TTS
+    # Try Replicate (High Quality)
+    if REPLICATE_API_TOKEN:
+        try:
+            import replicate
+            print(f"💎 Text: {text[:20]}...")
+            
+            # DYNAMIC VERSION FETCHING:
+            # Instead of hardcoding the hash, we ask Replicate for the latest version.
+            # This prevents "422 Invalid Version" errors when the model is updated.
+            model = replicate.models.get("lucataco/xtts-v2")
+            latest_version = model.versions.list()[0]
+            print(f"🔹 Using latest XTTS version: {latest_version.id[:8]}...")
+
+            output = replicate.run(
+                f"lucataco/xtts-v2:{latest_version.id}",
+                input={
+                    "text": text,
+                    "speaker": "Maysandra",
+                    "language": "ar",
+                    "cleanup_voice": True
+                }
+            )
+            
+            response = requests.get(output)
+            if response.status_code == 200:
+                with open(path, 'wb') as f:
+                    f.write(response.content)
+                print("✅ Replicate Success!")
+                return True
+        except Exception as e:
+            print(f"⚠️ Replicate Failed (Switching to Fallback): {e}")
+
+    # Fallback: Edge TTS (Free & Stable)
     return generate_tts_edge(text, path)
 
 def generate_tts_edge(text: str, path: str) -> bool:
