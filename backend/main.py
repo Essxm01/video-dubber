@@ -120,6 +120,7 @@ if GEMINI_API_KEY:
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
+    
     # We prefer the flash model for speed, but fallback to pro/standard if needed
     # Update: Prioritizing 'latest' and '2.0' models confirmed to be available in production logs
     models_to_try = [
@@ -130,40 +131,37 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         'gemini-1.5-pro'
     ]
     
-    # Try Gemini First
-    if GEMINI_API_KEY:
-        for model_name in models_to_try:
-            try:
-                model = genai.GenerativeModel(model_name)
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            
+            # STRICT PROMPT: FORCE RAW OUTPUT ONLY
+            prompt = f"""
+            Task: Translate the following English text to **Egyptian Colloquial Arabic (Masri)**.
+            
+            Input Text: "{text}"
+            
+            CRITICAL RULES:
+            1. Output **ONLY** the translated Arabic text.
+            2. NO "Here is the translation".
+            3. NO "Option 1 / Option 2".
+            4. NO pronunciation guides or notes.
+            5. Use street Egyptian (e.g., "عربية" not "سيارة", "شغل" not "عمل").
+            6. Do not wrap output in quotes.
+            """
+            
+            response = model.generate_content(prompt)
+            if response and response.text:
+                # Clean up any potential leakage
+                clean_text = response.text.strip().replace('"', '').replace("`", "").split('\n')[0]
+                print(f"🇪🇬 Gemini Raw: {clean_text}")
+                return clean_text
                 
-                # PROMPT ENGINEERED FOR EGYPTIAN SLANG
-                prompt = f"""
-                Act as a professional Egyptian dubbing artist.
-                Translate the following English text into **Egyptian Colloquial Arabic (Ammiya)**.
-                
-                Guidelines:
-                - Do NOT use Formal Arabic (Fusha). Never say "الحافلة", say "الأتوبيس".
-                - Never say "الدراجة النارية", say "الموتوسيكل".
-                - Never say "للغاية", say "جداً" or "أوي".
-                - Make it sound natural, like two friends talking in a cafe in Cairo.
-                - Keep the meaning accurate but the tone casual.
-                
-                Text: "{text}"
-                """
-                
-                response = model.generate_content(prompt)
-                if response and response.text:
-                    result = response.text.strip()
-                    # Remove any extra quotes or markdown if Gemini adds them
-                    result = result.replace('"', '').replace("'", "").replace("`", "")
-                    print(f"🇪🇬 Slang Translation: {text[:15]}... -> {result[:15]}...")
-                    return result
-                    
-            except Exception as e:
-                print(f"⚠️ Model {model_name} translation error: {e}")
-                continue
+        except Exception as e:
+            print(f"⚠️ Gemini Error ({model_name}): {e}")
+            continue
 
-    # Fallback (Only if Gemini dies completely)
+    # Fallback
     try:
         from deep_translator import GoogleTranslator
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
