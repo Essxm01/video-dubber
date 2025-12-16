@@ -308,6 +308,21 @@ def status(task_id: str):
         if res.data: return res.data[0]
     return {"status": "UNKNOWN"}
 
+def generate_srt_content(segments, translated_texts):
+    srt_content = ""
+    for i, (seg, trans) in enumerate(zip(segments, translated_texts)):
+        start_time = format_timestamp(seg['start'])
+        end_time = format_timestamp(seg['end'])
+        srt_content += f"{i+1}\n{start_time} --> {end_time}\n{trans}\n\n"
+    return srt_content
+
+def format_timestamp(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds - int(seconds)) * 1000)
+    return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+
 async def process_video_task(task_id, video_path, mode, target_lang, filename):
     try:
         base = task_id[:8]
@@ -326,6 +341,58 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             db_update(task_id, "FAILED", 0, "فشل تحليل الكلام")
             return
 
+        # -------------------------------------------
+        # MODE 1: TRANSLATION (Subtitles Only)
+        # -------------------------------------------
+        if mode == "TRANSLATION":
+            translated_texts = []
+            total = len(segments)
+            
+            for i, seg in enumerate(segments):
+                progress = 20 + int((i / total) * 60)
+                if i % 5 == 0: db_update(task_id, "TRANSLATING", progress, f"ترجمة النصوص {i+1}/{total}...")
+                translated_texts.append(translate_text(seg["text"], target_lang))
+            
+            # Generate SRT
+            srt_content = generate_srt_content(segments, translated_texts)
+            srt_path = os.path.join(OUTPUT_FOLDER, f"subs_{base}.srt")
+            with open(srt_path, "w", encoding="utf-8") as f:
+                f.write(srt_content)
+                
+            db_update(task_id, "BURNING_SUBS", 90, "دمج الترجمة مع الفيديو...")
+            output_path = os.path.join(OUTPUT_FOLDER, f"subtitled_{base}.mp4")
+            
+            # Burn Subtitles (Hardsub)
+            # Note: For strict Arabic handling, this depends on ffmpeg build. 
+            # Simple force_style for font size and alignment.
+            # Using absolute path for subtitles filter is safer.
+            abs_srt = os.path.abspath(srt_path).replace("\\", "/").replace(":", "\\:")
+            
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vf", f"subtitles='{abs_srt}':force_style='FontName=Arial,FontSize=24,Alignment=2,Outline=1,Shadow=1'",
+                "-c:a", "copy",
+                output_path
+            ], check=True)
+            
+            db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
+            url = upload_to_storage(output_path, "videos", f"subtitled/final_{base}.mp4", "video/mp4")
+            
+            db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
+            
+            # Cleanup
+            try:
+                os.remove(video_path)
+                os.remove(audio_path)
+                os.remove(srt_path)
+            except: pass
+            return
+
+        # -------------------------------------------
+        # MODE 2: DUBBING (Original Logic)
+        # -------------------------------------------
+        
         # Initialize Master Audio Track (pydub)
         master_audio = AudioSegment.silent(duration=0)
         
@@ -353,9 +420,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
                 segment_audio = AudioSegment.from_file(temp_file)
             else:
-                # If TTS failed, add silence for the duration to maintain sync? 
-                # Or just skip? Better to add silence or keep original?
-                # For now, silence placeholder matching original duration
+                # If TTS failed, add silence for the duration to maintain sync
                 segment_audio = AudioSegment.silent(duration=original_duration_ms)
 
             # --- SYNCHRONIZATION LOGIC ---
@@ -369,8 +434,6 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 master_audio += AudioSegment.silent(duration=gap_duration)
             
             # 2. Append Audio
-            # Note: If gap_duration is negative (overlap), we just append, which pushes the audio. 
-            # Ideally we might overlap, but appending is safer for clarity.
             master_audio += segment_audio
             
             # Clean up temp file
