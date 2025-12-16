@@ -126,34 +126,30 @@ def generate_tts_replicate(text: str, path: str) -> bool:
     
     try:
         import replicate
-        print(f"🗣️ Replicate XTTS: {text[:30]}...")
-        
-        # Using XTTS v2 model - high quality multilingual TTS
+        print(f"💎 Trying Replicate XTTS for: {text[:20]}...")
+        # UPDATED VERSION HASH for lucataco/xtts-v2
         output = replicate.run(
-            "lucataco/xtts-v2:684bc3855b37866c9c65add50fb7c579e667f7c5279bd28afb79873d93b957fd",
+            "lucataco/xtts-v2:5c7d5dc6dd8bf7571acaeb8529737411fc09121d30278473e58908f91803d636",
             input={
                 "text": text,
-                "speaker": "https://replicate.delivery/pbxt/Jt79w0xsT64R1JsiJ0LQRL8UcWspg5J4RFrU6YwEKpOT1ukS/male.wav",
+                "speaker": "Maysandra",
                 "language": "ar",
                 "cleanup_voice": True
             }
         )
         
-        # Download the audio file
-        if output:
-            response = requests.get(output, timeout=30)
-            if response.status_code == 200:
-                with open(path, "wb") as f:
-                    f.write(response.content)
-                print(f"✅ XTTS generated: {path}")
-                return os.path.exists(path) and os.path.getsize(path) > 100
-        
-        return False
-        
+        # Replicate returns a URL, we need to download it
+        response = requests.get(output)
+        if response.status_code == 200:
+            with open(path, 'wb') as f:
+                f.write(response.content)
+            print("✅ Replicate Success!")
+            return True
     except Exception as e:
-        print(f"⚠️ Replicate XTTS Failed: {e}")
-        # Fallback to Edge TTS
-        return generate_tts_edge(text, path)
+        print(f"⚠️ Replicate Failed (Switching to Fallback): {e}")
+    
+    # Fallback to Edge TTS
+    return generate_tts_edge(text, path)
 
 def generate_tts_edge(text: str, path: str) -> bool:
     """Fallback: Edge TTS (Salma voice)"""
