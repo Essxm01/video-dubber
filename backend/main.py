@@ -135,29 +135,25 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         try:
             model = genai.GenerativeModel(model_name)
             
-            # STRICT PROMPT: FORCE RAW OUTPUT WITH EMOTION TAGS
+            # STRICT PROMPT: Modern Standard Arabic (Fusha)
             prompt = f"""
-            Task: Translate the following English text to **Egyptian Colloquial Arabic (Masri)**.
+            Task: Translate the following English text to **Modern Standard Arabic (Fusha)**.
             
             Input Text: "{text}"
             
             CRITICAL RULES:
-            1. **DETECT EMOTION:** Analyze the tone of the input. If it is happy, sad, angry, surprised, or whispering, **you MUST prepend a tag** like [excited], [sad], [angry], [whispering], [laughing] to the translation.
-            2. **Output Format:** `[tag] Arabic_Text` (or just `Arabic_Text` if neutral).
-            3. **Dialect:** Use authentic Egyptian slang (e.g., "عربية" not "سيارة", "كويس" not "جيد").
-            4. **Clean Output:** Output ONLY the final Arabic string with the tag. No "Here is...", no quotes.
-            
-            Examples:
-            - "I can't believe I won!" -> "[excited] يا نهار أبيض! أنا كسبت!"
-            - "Please, be quiet." -> "[whispering] وطوا صوتكم لو سمحتوا."
-            - "I am so mad right now." -> "[angry] أنا متضايق جداً دلوقتي."
+            1. Output **ONLY** the translated Arabic text.
+            2. Use correct, formal vocabulary (e.g., "الحافلة" not "الأتوبيس", "جداً" not "أوي").
+            3. Ensure professional sentence structure suitable for a documentary or news broadcast.
+            4. NO "Here is the translation" or metadata.
+            5. Do not wrap output in quotes.
             """
             
             response = model.generate_content(prompt)
             if response and response.text:
-                # Clean up any potential leakage but KEEP the brackets [ ]
+                # Clean up any potential leakage
                 clean_text = response.text.strip().replace('"', '').replace("`", "").split('\n')[0]
-                print(f"🇪🇬 Gemini Raw w/ Emotion: {clean_text}")
+                print(f"🇸🇦 Gemini Fusha: {clean_text}")
                 return clean_text
                 
         except Exception as e:
@@ -170,7 +166,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except: return text
 
-# 3. TTS (Gemini 2.0 Native Audio with Acting Cues -> Fallback Edge TTS)
+# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
@@ -180,27 +176,24 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         return False
 
     try:
-        # We parse the text for emotions in the logs just to see
-        print(f"💎 Gemini 2.0 TTS: Directing scene -> {text[:20]}...")
-
-        # USE THE NEW MULTIMODAL MODEL (Gemini 2.0 Flash)
-        # Confirmed available in logs: 'models/gemini-2.0-flash'
+        print(f"💎 Gemini TTS: Narrating: {text[:15]}...")
+        
+        # Use available models confirmed in logs (2.0 is usually best for native audio)
         model_name = "gemini-2.0-flash" 
         model = genai.GenerativeModel(model_name)
         
-        # ACTING PROMPT
+        # ENGINEERING THE "NARRATOR" PROMPT
         prompt = f"""
-        You are an expert Egyptian Voice Actor. 
-        Generate spoken audio for the provided text.
+        Act as a professional Arabic Voice Over Artist (Narrator).
+        Your task is to read the following text in impeccable **Modern Standard Arabic (Fusha)**.
         
-        STRICT ACTING RULES:
-        1. **Emotion Tags:** If you see tags like [whispering], [excited], [sigh], [laugh], you MUST perform them, not read them.
-           - Example: "[whispering] اسكت وطّي صوتك" -> Whisper the Arabic text.
-           - Example: "[sigh] ياه، تعبت" -> Make a sighing sound then speak.
-        2. **Accent:** Authentic Egyptian Cairo slang (Masri).
-        3. **Tone:** Natural, conversational, NOT robotic.
+        CRITICAL PERFORMANCE INSTRUCTIONS:
+        1. **Tone:** Professional, clear, warm, and engaging (Documentary/News style).
+        2. **Articulation:** Enunciate clearly with proper pronunciation (Tajweed).
+        3. **Emotion:** Avoid robotic monotony. Infuse the text with appropriate feeling based on the context.
+        4. **Stage Directions:** You may still see tags like [excited], [sad]. Use them to adjust your tone, but DO NOT read them aloud.
         
-        Input Text:
+        Input Text to Perform:
         "{text}"
         """
         
@@ -211,24 +204,18 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             )
         )
         
-        # Write the binary audio data
+        # Save the audio
         with open(path, "wb") as f:
             f.write(response.parts[0].inline_data.data)
             
-        print("✅ Gemini 2.0 Success! (Acting & Emotion Applied)")
+        print("✅ Gemini TTS Success! (Fusha Narration)")
         return True
 
     except Exception as e:
-        print(f"⚠️ Gemini 2.0 Audio Failed: {e}")
+        print(f"⚠️ Gemini TTS Failed: {e}")
         
     # Fallback to Edge TTS
-    # Strip brackets for Edge TTS because it can't act
-    clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[angry]", "").replace("[laughing]", "").replace("[sigh]", "")
-    # Remove any other potential bracketed tags
-    import re
-    clean_text = re.sub(r'\[.*?\]', '', clean_text).strip()
-    
-    return generate_tts_edge_fallback(clean_text, path)
+    return generate_tts_edge_fallback(text, path)
 
 def generate_tts_edge_fallback(text: str, path: str) -> bool:
     """Fallback: Edge TTS (Salma voice)"""
