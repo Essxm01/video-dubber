@@ -103,16 +103,57 @@ def smart_transcribe(audio_path: str):
         print(f"❌ Groq Failed: {e}")
         return []
 
-# 2. TRANSLATION (Google Translate)
+import google.generativeai as genai
+
+# Configure Gemini for Translation
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
+    
+    # We prefer the flash model for speed and colloquial understanding
+    models_to_try = ['gemini-1.5-flash', 'gemini-1.5-pro']
+    
+    # Try Gemini First
+    if GEMINI_API_KEY:
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                
+                # PROMPT ENGINEERED FOR EGYPTIAN SLANG
+                prompt = f"""
+                Act as a professional Egyptian dubbing artist.
+                Translate the following English text into **Egyptian Colloquial Arabic (Ammiya)**.
+                
+                Guidelines:
+                - Do NOT use Formal Arabic (Fusha). Never say "الحافلة", say "الأتوبيس".
+                - Never say "الدراجة النارية", say "الموتوسيكل".
+                - Never say "للغاية", say "جداً" or "أوي".
+                - Make it sound natural, like two friends talking in a cafe in Cairo.
+                - Keep the meaning accurate but the tone casual.
+                
+                Text: "{text}"
+                """
+                
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    result = response.text.strip()
+                    # Remove any extra quotes or markdown if Gemini adds them
+                    result = result.replace('"', '').replace("'", "").replace("`", "")
+                    print(f"🇪🇬 Slang Translation: {text[:15]}... -> {result[:15]}...")
+                    return result
+                    
+            except Exception as e:
+                print(f"⚠️ Model {model_name} translation error: {e}")
+                continue
+
+    # Fallback (Only if Gemini dies completely)
     try:
-        result = GoogleTranslator(source='auto', target=target_lang).translate(text)
-        print(f"🌐 {text[:20]}... → {result[:20]}...")
-        return result
-    except Exception as e:
-        print(f"⚠️ Translation Error: {e}")
-        return text
+        from deep_translator import GoogleTranslator
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except: return text
 
 # 3. TTS (Google Cloud TTS / Gemini -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
