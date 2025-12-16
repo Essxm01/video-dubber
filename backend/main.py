@@ -1,9 +1,8 @@
 """
-Arab Dubbing API - Version 16.0 (Salma Voice Stability)
-- REMOVED: All Replicate logic.
-- IMPROVED: Edge TTS voice changed to 'ar-EG-SalmaNeural' (female voice, often more natural than male voices).
-- ENGINE: Groq (STT) + Gemini (Translation/Slang) + Edge TTS (Salma Voice).
-- STABILITY: Guaranteed to run on Render Free Tier with best available free voice.
+Arab Dubbing API - Version 17.0 (Fixed Translation + No Background Audio)
+- FIXED: Gemini 404 error with model fallbacks
+- FIXED: Background audio removed completely
+- ENGINE: Groq (STT) + Gemini/Google Translate (Translation) + Edge TTS (Salma)
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
@@ -13,11 +12,11 @@ from pydantic import BaseModel
 import os
 import uuid
 import subprocess
-import time
 from datetime import datetime
 from dotenv import load_dotenv
 import google.generativeai as genai
 from groq import Groq
+from deep_translator import GoogleTranslator
 
 load_dotenv()
 
@@ -30,7 +29,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-app = FastAPI(title="Arab Dubbing API", version="16.0.0")
+app = FastAPI(title="Arab Dubbing API", version="17.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,7 +50,7 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
 @app.get("/health")
 def health():
-    return {"status": "active", "engine": "Max Free Stability (Salma Voice)"}
+    return {"status": "active", "version": "17.0.0", "engine": "Groq + Gemini/Google + Edge TTS"}
 
 # --- HELPERS ---
 def get_fresh_supabase():
@@ -83,9 +82,9 @@ def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
     return subprocess.run(cmd, capture_output=True).returncode == 0
 
-# --- CORE LOGIC (FREE TIER) ---
+# --- CORE LOGIC ---
 
-# 1. TRANSCRIPTION (Groq - The Fast Free Option)
+# 1. TRANSCRIPTION (Groq Whisper)
 def smart_transcribe(audio_path: str):
     print("🎙️ Using Groq Whisper (Free & Fast)...")
     try:
@@ -100,69 +99,92 @@ def smart_transcribe(audio_path: str):
         if hasattr(transcription, 'segments'):
             for seg in transcription.segments:
                 segments.append({"start": seg["start"], "end": seg["end"], "text": seg["text"].strip()})
+        print(f"✅ Transcribed {len(segments)} segments")
         return segments
     except Exception as e:
         print(f"❌ Groq Whisper Failed: {e}")
         return []
 
-# 2. TRANSLATION (Gemini Slang)
+# 2. TRANSLATION (Gemini with Fallback to Google Translate)
 def translate_with_gemini(text: str, target_lang: str = "ar") -> str:
     if not text.strip(): return ""
+    
+    # List of Gemini models to try
+    models_to_try = ['gemini-1.5-flash', 'gemini-pro', 'gemini-1.0-pro']
+    
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            prompt = f"""
+            Translate this text to **Egyptian Arabic (Slang/Ammiya)**. 
+            Make it conversational and natural. Do NOT be formal.
+            Text: "{text}"
+            """
+            response = model.generate_content(prompt)
+            
+            if response and response.text:
+                result = response.text.strip()
+                print(f"🌐 ({model_name}) {text[:20]}... → {result[:20]}...")
+                return result
+                
+        except Exception as e:
+            print(f"⚠️ Model {model_name} failed: {e}")
+            continue
+
+    # FALLBACK: Google Translate
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        Translate this text to **Egyptian Arabic (Slang/Ammiya)**. 
-        Make it conversational and natural. Do NOT be formal.
-        Text: "{text}"
-        """
-        response = model.generate_content(prompt)
-        result = response.text.strip()
-        print(f"🌐 {text[:20]}... → {result[:20]}...")
+        print("⚠️ All Gemini models failed. Using Google Translate...")
+        result = GoogleTranslator(source='auto', target=target_lang).translate(text)
+        print(f"🌐 (Google) {text[:20]}... → {result[:20]}...")
         return result
     except Exception as e:
-        print(f"⚠️ Gemini Translation Failed: {e}")
+        print(f"❌ Translation completely failed: {e}")
         return text
 
-# 3. VOICE GENERATION (Edge TTS - Salma Voice)
+# 3. VOICE GENERATION (Edge TTS - Salma)
 def smart_tts_generate(text: str, path: str):
     if not text.strip(): return False
     try:
-        import edge_tts
-        # ✅ SALMA NEURAL VOICE (ar-EG-SalmaNeural) - Most natural female voice
         cmd = ["edge-tts", "--text", text, "--write-media", path, "--voice", "ar-EG-SalmaNeural", "--rate=-3%"] 
-        subprocess.run(cmd, check=True)
-        return True
+        subprocess.run(cmd, check=True, capture_output=True)
+        return os.path.exists(path) and os.path.getsize(path) > 100
     except Exception as e:
         print(f"❌ TTS Failed: {e}")
         return False
 
+# 4. MERGE (NO BACKGROUND AUDIO - Dubbed only)
 def merge_audio_video(video_path, audio_files, output_path):
-    valid_files = [f for f in audio_files if os.path.exists(f)]
-    if not valid_files: return
+    valid_files = [f for f in audio_files if os.path.exists(f) and os.path.getsize(f) > 100]
+    if not valid_files:
+        print("⚠️ No valid audio files")
+        return
 
     list_file = "list.txt"
     with open(list_file, "w") as f:
-        for a in valid_files: f.write(f"file '{os.path.abspath(a)}'\n")
+        for a in valid_files: 
+            f.write(f"file '{os.path.abspath(a)}'\n")
     
-    merged_tts = "merged_tts.mp3"
-    subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", merged_tts], check=True)
+    merged_audio = "merged_dubbed.mp3"
+    subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", merged_audio], check=True)
     
-    # Background Ducking (Audio Mixing)
-    cmd = [
-        "ffmpeg", "-i", video_path, "-i", merged_tts, 
-        "-filter_complex", "[0:a]volume=0.15[bg];[1:a]volume=1.3[fg];[bg][fg]amix=inputs=2:duration=first[a]", 
-        "-map", "0:v", "-map", "[a]", 
-        "-c:v", "copy", "-c:a", "aac", 
-        "-shortest", "-y", output_path
-    ]
-    try:
-        subprocess.run(cmd, check=True)
-    except:
-        subprocess.run(["ffmpeg", "-i", video_path, "-i", merged_tts, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-y", output_path], check=True)
+    # ✅ SIMPLE MERGE: Replace original audio completely with dubbed audio
+    # NO background audio mixing!
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", merged_audio,
+        "-c:v", "copy",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        output_path
+    ], check=True)
+    
+    print("✅ Video merged (dubbed audio only, no background)")
     
     try:
         os.remove(list_file)
-        os.remove(merged_tts)
+        os.remove(merged_audio)
     except: pass
 
 class TaskResponse(BaseModel):
@@ -213,8 +235,8 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         segments = smart_transcribe(audio_path)
         
         if not segments:
-             db_update(task_id, "FAILED", 0, "فشل تحليل الكلام (قد لا يوجد صوت).")
-             return
+            db_update(task_id, "FAILED", 0, "فشل تحليل الكلام")
+            return
 
         tts_files = []
         total = len(segments)
@@ -225,19 +247,19 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             if i % 2 == 0:
                 db_update(task_id, "GENERATING_AUDIO", progress, f"دبلجة {i+1}/{total}...")
             
-            # 1. Translate (Gemini Egyptian Slang)
+            # 1. Translate (Gemini → Google Translate fallback)
             translated = translate_with_gemini(seg["text"], target_lang)
             
             # 2. TTS (Salma Voice)
             tts_path = os.path.join(AUDIO_FOLDER, f"tts_{base}_{i}.mp3")
-            smart_tts_generate(translated, tts_path)
-            tts_files.append(tts_path)
+            if smart_tts_generate(translated, tts_path):
+                tts_files.append(tts_path)
             
-        db_update(task_id, "MERGING", 90, "دمج الصوت الجديد...")
+        db_update(task_id, "MERGING", 90, "دمج الفيديو...")
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
         merge_audio_video(video_path, tts_files, output_path)
         
-        db_update(task_id, "UPLOADING", 95, "رفع النتيجة النهائية...")
+        db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
         
         db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
