@@ -135,26 +135,29 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         try:
             model = genai.GenerativeModel(model_name)
             
-            # STRICT PROMPT: FORCE RAW OUTPUT ONLY
+            # STRICT PROMPT: FORCE RAW OUTPUT WITH EMOTION TAGS
             prompt = f"""
             Task: Translate the following English text to **Egyptian Colloquial Arabic (Masri)**.
             
             Input Text: "{text}"
             
             CRITICAL RULES:
-            1. Output **ONLY** the translated Arabic text.
-            2. NO "Here is the translation".
-            3. NO "Option 1 / Option 2".
-            4. NO pronunciation guides or notes.
-            5. Use street Egyptian (e.g., "عربية" not "سيارة", "شغل" not "عمل").
-            6. Do not wrap output in quotes.
+            1. **DETECT EMOTION:** Analyze the tone of the input. If it is happy, sad, angry, surprised, or whispering, **you MUST prepend a tag** like [excited], [sad], [angry], [whispering], [laughing] to the translation.
+            2. **Output Format:** `[tag] Arabic_Text` (or just `Arabic_Text` if neutral).
+            3. **Dialect:** Use authentic Egyptian slang (e.g., "عربية" not "سيارة", "كويس" not "جيد").
+            4. **Clean Output:** Output ONLY the final Arabic string with the tag. No "Here is...", no quotes.
+            
+            Examples:
+            - "I can't believe I won!" -> "[excited] يا نهار أبيض! أنا كسبت!"
+            - "Please, be quiet." -> "[whispering] وطوا صوتكم لو سمحتوا."
+            - "I am so mad right now." -> "[angry] أنا متضايق جداً دلوقتي."
             """
             
             response = model.generate_content(prompt)
             if response and response.text:
-                # Clean up any potential leakage
+                # Clean up any potential leakage but KEEP the brackets [ ]
                 clean_text = response.text.strip().replace('"', '').replace("`", "").split('\n')[0]
-                print(f"🇪🇬 Gemini Raw: {clean_text}")
+                print(f"🇪🇬 Gemini Raw w/ Emotion: {clean_text}")
                 return clean_text
                 
         except Exception as e:
