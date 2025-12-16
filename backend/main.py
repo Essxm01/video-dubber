@@ -179,7 +179,8 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         print(f"💎 Gemini TTS: Narrating: {text[:15]}...")
         
         # Use available models confirmed in logs (2.0 is usually best for native audio)
-        model_name = "gemini-2.0-flash" 
+        # Update: Using experimental model to ensure audio generation support
+        model_name = "gemini-2.0-flash-exp" 
         model = genai.GenerativeModel(model_name)
         
         # ENGINEERING THE "NARRATOR" PROMPT
