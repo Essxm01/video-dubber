@@ -167,6 +167,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
     except: return text
 
 # 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
+# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
@@ -176,25 +177,22 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         return False
 
     try:
-        print(f"💎 Gemini TTS: Narrating: {text[:15]}...")
+        # CRITICAL: Use Gemini 2.0 Flash Experimental for Native Audio
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
         
-        # Use available models confirmed in logs (2.0 is usually best for native audio)
-        # Update: Using experimental model to ensure audio generation support
-        model_name = "gemini-2.0-flash-exp" 
-        model = genai.GenerativeModel(model_name)
+        print(f"💎 Gemini 2.0 TTS: Narrating in Fusha -> {text[:20]}...")
         
-        # ENGINEERING THE "NARRATOR" PROMPT
+        # PROMPT FOR FUSHA VOICE ACTING
         prompt = f"""
-        Act as a professional Arabic Voice Over Artist (Narrator).
-        Your task is to read the following text in impeccable **Modern Standard Arabic (Fusha)**.
+        Act as a professional Arabic Documentary Narrator.
+        Generate spoken audio for the provided text.
         
-        CRITICAL PERFORMANCE INSTRUCTIONS:
-        1. **Tone:** Professional, clear, warm, and engaging (Documentary/News style).
-        2. **Articulation:** Enunciate clearly with proper pronunciation (Tajweed).
-        3. **Emotion:** Avoid robotic monotony. Infuse the text with appropriate feeling based on the context.
-        4. **Stage Directions:** You may still see tags like [excited], [sad]. Use them to adjust your tone, but DO NOT read them aloud.
+        RULES:
+        1. **Language:** strict Modern Standard Arabic (Fusha).
+        2. **Tone:** Deep, warm, and professional.
+        3. **Performance:** Read with feeling. If you see [sad], sound sad. If [excited], sound excited.
         
-        Input Text to Perform:
+        Input Text:
         "{text}"
         """
         
@@ -209,24 +207,24 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         with open(path, "wb") as f:
             f.write(response.parts[0].inline_data.data)
             
-        print("✅ Gemini TTS Success! (Fusha Narration)")
+        print("✅ Gemini 2.0 Success!")
         return True
 
     except Exception as e:
-        print(f"⚠️ Gemini TTS Failed: {e}")
+        print(f"⚠️ Gemini 2.0 Audio Failed: {e}")
         
-    # Fallback to Edge TTS
-    return generate_tts_edge_fallback(text, path)
-
-def generate_tts_edge_fallback(text: str, path: str) -> bool:
-    """Fallback: Edge TTS (Salma voice)"""
-    if not text.strip(): 
-        return False
+    # Fallback to Edge TTS (Robot)
     try:
-        print(f"🔄 Edge TTS Fallback: {text[:20]}...")
-        cmd = ["edge-tts", "--text", text, "--write-media", path, "--voice", "ar-EG-SalmaNeural", "--rate=-3%"]
-        subprocess.run(cmd, check=True, capture_output=True)
-        return os.path.exists(path) and os.path.getsize(path) > 100
+        print("🔄 Fallback: Edge TTS...")
+        import edge_tts
+        clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[sigh]", "")
+        # Using subprocess as in previous implementation because edge_tts is a CLI in this context or kept consistent
+        # The user provided snippet used subprocess, so let's check:
+        # cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"] 
+        # Using ShakirNeural (Male) as requested for Documentary style fallback
+        cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"]
+        subprocess.run(cmd, check=True)
+        return True
     except Exception as e:
         print(f"❌ All TTS Failed: {e}")
         return False
