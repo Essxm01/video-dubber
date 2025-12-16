@@ -209,8 +209,11 @@ function App() {
   };
 
   // Handle direct file upload (bypasses YouTube)
-  const handleFileUpload = async () => {
-    if (!uploadedFile) {
+  const handleFileUpload = async (fileToUpload?: File, selectedMode?: ServiceMode) => {
+    const file = fileToUpload || uploadedFile;
+    const modeToUse = selectedMode || mode;
+
+    if (!file) {
       showError(lang === 'ar' ? 'الرجاء اختيار ملف فيديو' : 'Please select a video file');
       return;
     }
@@ -226,16 +229,18 @@ function App() {
 
     setMetadata({
       url: '',
-      title: uploadedFile.name,
+      title: file.name,
       smartSummary: '',
       thumbnail: '',
-      mode: mode
+      mode: modeToUse
     });
+
+    setMode(modeToUse);
 
     setState(ProcessingState.PROCESSING);
 
     try {
-      const { taskId, success, error } = await uploadVideo(uploadedFile, mode, 'ar');
+      const { taskId, success, error } = await uploadVideo(file, modeToUse, 'ar');
 
       if (!success || !taskId) {
         setErrorMsg(error || 'فشل رفع الملف');
@@ -400,9 +405,7 @@ function App() {
                     handleStart();
                   }}
                   onStartUpload={(file, selectedMode) => {
-                    setUploadedFile(file);
-                    setMode(selectedMode);
-                    handleFileUpload();
+                    handleFileUpload(file, selectedMode);
                   }}
                   isLoading={state === ProcessingState.VALIDATING}
                   error={errorMsg}
@@ -438,7 +441,7 @@ function App() {
                 </div>
 
                 <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-8 border border-slate-200 dark:border-slate-800 shadow-xl">
-                  <StageStepper currentStage={taskStatus.stage} t={t} />
+                  <StageStepper currentStage={taskStatus.stage} mode={mode} t={t} />
 
                   <div className="mt-8 space-y-2">
                     <div className="flex justify-between text-sm font-medium text-slate-500 dark:text-slate-400">
