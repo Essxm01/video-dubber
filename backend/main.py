@@ -54,21 +54,33 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 def health():
     return {"status": "active", "version": "19.0.0", "engine": "Groq + Google Cloud TTS (Gemini)"}
 
+# --- LOCAL TASK STORAGE (reliable fallback) ---
+LOCAL_TASKS = {}
+
 # --- HELPERS ---
 def get_fresh_supabase():
     try:
         from supabase import create_client
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
+        if SUPABASE_URL and SUPABASE_KEY:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+        return None
     except: return None
 
 def db_update(task_id: str, status: str, progress: int, message: str, result: dict = None):
+    data = {"status": status, "progress": progress, "message": message, "updated_at": datetime.now().isoformat()}
+    if result: data["result"] = result
+    
+    # Always update local storage (reliable)
+    if task_id not in LOCAL_TASKS:
+        LOCAL_TASKS[task_id] = {}
+    LOCAL_TASKS[task_id].update(data)
+    print(f"📊 {status} {progress}%: {message}")
+    
+    # Also try Supabase
     try:
         sb = get_fresh_supabase()
         if sb:
-            data = {"status": status, "progress": progress, "message": message, "updated_at": datetime.now().isoformat()}
-            if result: data["result"] = result
             sb.table("projects").update(data).eq("id", task_id).execute()
-            print(f"📊 {status} {progress}%: {message}")
     except: pass
 
 def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type: str) -> str:
@@ -322,10 +334,18 @@ async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)
 
 @app.get("/status/{task_id}")
 def status(task_id: str):
-    sb = get_fresh_supabase()
-    if sb:
-        res = sb.table("projects").select("*").eq("id", task_id).execute()
-        if res.data: return res.data[0]
+    # First check local storage (most reliable)
+    if task_id in LOCAL_TASKS:
+        return {"id": task_id, **LOCAL_TASKS[task_id]}
+    
+    # Then try Supabase
+    try:
+        sb = get_fresh_supabase()
+        if sb:
+            res = sb.table("projects").select("*").eq("id", task_id).execute()
+            if res.data: return res.data[0]
+    except: pass
+    
     return {"status": "UNKNOWN"}
 
 def generate_srt_content(segments, translated_texts):
