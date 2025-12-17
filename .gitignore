@@ -37,3 +37,17 @@ audio/
 pip-log.txt
 
 client_secret_*.json
+
+# AI Services (External - D:/Video Dubber/ai-services/)
+../ai-services/
+ai-services/
+ai_delivery/
+
+# AI Model Files (Large Binary Files)
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.ckpt
+*.h5

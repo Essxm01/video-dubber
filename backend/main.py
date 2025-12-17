@@ -28,6 +28,8 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Uses Google Cloud TTS API Key
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "westeurope")
 
 app = FastAPI(title="Arab Dubbing API", version="19.0.0")
 
@@ -222,21 +224,39 @@ def generate_audio_gemini(text: str, path: str) -> bool:
     except Exception as e:
         print(f"⚠️ Gemini 2.0 Audio Failed: {e}")
         
-    # Fallback to Edge TTS (Robot)
-    try:
-        print("🔄 Fallback: Edge TTS...")
-        import edge_tts
-        clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[sigh]", "")
-        # Using subprocess as in previous implementation because edge_tts is a CLI in this context or kept consistent
-        # The user provided snippet used subprocess, so let's check:
-        # cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"] 
-        # Using ShakirNeural (Male) as requested for Documentary style fallback
-        cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"]
-        subprocess.run(cmd, check=True)
-        return True
-    except Exception as e:
-        print(f"❌ All TTS Failed: {e}")
-        return False
+    # Fallback to Azure TTS (High Quality)
+    if AZURE_SPEECH_KEY:
+        try:
+            print("🔄 Fallback: Azure TTS (High Quality)...")
+            import azure.cognitiveservices.speech as speechsdk
+            
+            speech_config = speechsdk.SpeechConfig(
+                subscription=AZURE_SPEECH_KEY, 
+                region=AZURE_SPEECH_REGION
+            )
+            # Use high-quality Arabic Neural voice
+            speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural"
+            speech_config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3
+            )
+            
+            clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[sigh]", "")
+            
+            audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
+            synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+            
+            result = synthesizer.speak_text_async(clean_text).get()
+            
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                print("✅ Azure TTS Success!")
+                return True
+            else:
+                print(f"⚠️ Azure TTS Failed: {result.reason}")
+        except Exception as e:
+            print(f"❌ Azure TTS Error: {e}")
+    
+    print("❌ All TTS methods failed")
+    return False
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
