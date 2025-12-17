@@ -96,6 +96,11 @@ export const getTaskStatus = async (taskId: string): Promise<{
       message: data.message || ''
     };
 
+    // Ensure absolute URL for video
+    if (data.result?.dubbed_video_url && !data.result.dubbed_video_url.startsWith('http')) {
+      data.result.dubbed_video_url = `${API_BASE_URL}${data.result.dubbed_video_url}`;
+    }
+
     return {
       status,
       completed: data.status === 'COMPLETED',
