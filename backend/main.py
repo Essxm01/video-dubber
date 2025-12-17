@@ -511,14 +511,23 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
         
+        if not url:
+            # If upload fails, try to fallback to local URL (for inspection) but warn
+            print("⚠️ Upload failed, falling back to local URL")
+            url = f"/output/{os.path.basename(output_path)}"
+            if not os.path.exists(output_path):
+                 raise Exception("فشل رفع الملف إلى السحابة (Supabase Storage Failed)")
+
         db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
         
-        # Cleanup
-        try:
-            os.remove(video_path)
-            os.remove(audio_path)
-            os.remove(merged_audio_path)
-        except: pass
+        # Cleanup (ONLY if upload successful to keep local debug file)
+        if url.startswith("http"):
+             try:
+                os.remove(video_path)
+                os.remove(audio_path)
+                os.remove(merged_audio_path)
+                # os.remove(output_path) # Keep output for now just in case
+             except: pass
             
     except Exception as e:
         print(f"🔥 FATAL ERROR: {e}")
