@@ -87,10 +87,23 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
     try:
         sb = get_fresh_supabase()
         if not sb: return None
+        
+        # Ensure bucket exists
+        buckets = sb.storage.list_buckets()
+        bucket_exists = any(b.name == bucket for b in buckets)
+        if not bucket_exists:
+            try: sb.storage.create_bucket(bucket, options={"public": False})
+            except: pass
+
         with open(file_path, "rb") as f:
             sb.storage.from_(bucket).upload(path=dest_name, file=f.read(), file_options={"content-type": content_type, "upsert": "true"})
-        return sb.storage.from_(bucket).get_public_url(dest_name)
-    except: return None
+        
+        # Use Signed URL (valid for 10 years ~ 315360000s) to avoid private bucket issues
+        # Public URL often fails if bucket is not explicitly set to Public
+        return sb.storage.from_(bucket).create_signed_url(dest_name, 315360000)
+    except Exception as e:
+        print(f"Server Upload Error: {e}")
+        return None
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
