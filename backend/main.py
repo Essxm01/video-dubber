@@ -100,7 +100,12 @@ def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type:
         
         # Use Signed URL (valid for 10 years ~ 315360000s) to avoid private bucket issues
         # Public URL often fails if bucket is not explicitly set to Public
-        return sb.storage.from_(bucket).create_signed_url(dest_name, 315360000)
+        res = sb.storage.from_(bucket).create_signed_url(dest_name, 315360000)
+        
+        # Handle dict response (Supabase Python client returns {'signedURL': '...'})
+        if isinstance(res, dict) and "signedURL" in res:
+            return res["signedURL"]
+        return res
     except Exception as e:
         print(f"Server Upload Error: {e}")
         return None
