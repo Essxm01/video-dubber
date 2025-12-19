@@ -286,54 +286,57 @@ def generate_audio_azure(text: str, path: str):
         print(f"❌ Azure Error: {e}")
         return False
 
-# 3. HYBRID PIPELINE: Gemini (Text Opt) + Azure (TTS)
+# 3. HYBRID PIPELINE: Gemini (SSML Generation) + Azure (TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
+    """Generate human-like audio using Gemini SSML + Azure TTS."""
     if not text.strip(): return False
 
-    print(f"🚀 Hybrid Pipeline: Processing segment -> {text[:20]}...")
+    print(f"🚀 SSML Pipeline: Processing -> {text[:25]}...")
 
-    # --- STEP 1: Gemini (The Director) - Optimize Text ---
-    # We ask Gemini to ensure the text is perfect Fusha and ready for TTS
-    optimized_text = text
+    # --- STEP 1: Gemini (SSML Engineer) - Generate SSML Script ---
+    ssml_script = None
     try:
         if gemini_client:
             response = gemini_client.models.generate_content(
-                model='gemini-2.0-flash', # Use the fast, smart text model
+                model='gemini-2.0-flash',
                 contents=f"""
-                Role: Senior Dubbing Scriptwriter (Arabic).
-                Task: Convert the input text into natural, spoken Modern Standard Arabic (Fusha).
+                Role: Expert SSML Audio Engineer (Arabic).
+                Task: Convert the input text into a high-quality SSML script for Azure TTS.
                 
-                Strict Output Rules (Safety First):
-                1. **Flow:** Output must be coherent sentences suitable for narration. 
-                   - CRITICAL: Do NOT output dictionary definitions, word lists, or grammatical conjugations (e.g., do not list "Anta/Anti/Antuma" for "You"). If a word is isolated, translate its most common meaning in context.
+                Strict Guidelines:
+                1. **Format:** Output VALID XML/SSML strictly. Start with <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ar-EG"> and end with </speak>.
+                2. **Voice:** Include <voice name="ar-EG-ShakirNeural"> inside the speak tag.
+                3. **Pauses (Breathing):** Insert <break time="400ms"/> after long sentences or dramatic points. Insert <break time="150ms"/> after commas.
+                4. **Emphasis:** Use <emphasis level="moderate">WORD</emphasis> sparingly for 1-2 important keywords per sentence.
+                5. **Pacing:** Keep the flow natural. Do NOT over-use tags. Less is more.
+                6. **Language:** Modern Standard Arabic (Fusha) with *Smart Tashkeel* on ambiguous words only.
+                7. **Content:** Translate the input accurately. Do not add intro/outro or explanations.
+                8. **Safety:** Do NOT output lists, conjugations, or definitions. Only the SSML script.
                 
-                2. **Pronunciation (Smart Tashkeel):** - Do NOT add Tashkeel to every letter (it confuses the TTS).
-                   - Add diacritics *ONLY* on words where ambiguity exists (e.g., Passive voice vs Active voice).
-                   - Rely on the natural context for standard words.
-                
-                3. **Clean:** Remove all acting cues (like [silence]). Output only the text to be spoken.
-                
-                Input: "{text}"
+                Input Text:
+                "{text}"
                 """,
-                config={'response_mime_type': 'text/plain'} # Explicitly ask for TEXT
+                config={'response_mime_type': 'text/plain'}
             )
             if response.text:
-                optimized_text = response.text.strip()
-                # Safety fallback: If Gemini hallucinated a list, stick to original text processing
-                if optimized_text.count('/') > 3 and len(optimized_text) < 50: 
-                     # Basic heuristic: if output is short and full of slashes like "Anta/Anti", use simplified version
-                     print("⚠️ Detected potential list hallucination. Using safe cleaning.")
-                     optimized_text = text
+                ssml_script = response.text.strip()
+                # Cleanup: Remove markdown code blocks if present
+                ssml_script = ssml_script.replace("```xml", "").replace("```ssml", "").replace("```", "").strip()
                 
-                print(f"💎 Gemini Refined Text: {optimized_text[:30]}...")
+                # Safety: Ensure it starts with <speak
+                if not ssml_script.startswith("<speak"):
+                    print("⚠️ Invalid SSML detected, falling back to plain text.")
+                    ssml_script = None
+                else:
+                    print(f"💎 SSML Generated: {ssml_script[:60]}...")
         else:
-             print("⚠️ Gemini Client missing, skipping optimization.")
+            print("⚠️ Gemini Client missing, using plain text fallback.")
         
     except Exception as e:
-        print(f"⚠️ Gemini Text Optimization Failed: {e}")
-        optimized_text = text # Fallback to original text
+        print(f"⚠️ Gemini SSML Generation Failed: {e}")
+        ssml_script = None
 
-    # --- STEP 2: Azure (The Voice) - Generate Audio ---
+    # --- STEP 2: Azure (The Voice) - Synthesize Audio ---
     try:
         azure_key = os.getenv("AZURE_SPEECH_KEY")
         azure_region = os.getenv("AZURE_SPEECH_REGION")
@@ -343,21 +346,33 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             return False
 
         speech_config = speechsdk.SpeechConfig(subscription=azure_key, region=azure_region)
-        # "ar-EG-ShakirNeural" is the industry standard for Fusha/Documentary
-        speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural" 
+        speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural"
         
         audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
 
-        # Synthesize the Gemini-Optimized Text
-        result = synthesizer.speak_text_async(optimized_text).get()
+        # Use SSML if available, otherwise fallback to plain text
+        if ssml_script:
+            print("🎭 Azure TTS: Using SSML mode...")
+            result = synthesizer.speak_ssml_async(ssml_script).get()
+        else:
+            # Fallback: Plain text mode
+            print("📝 Azure TTS: Using plain text mode...")
+            result = synthesizer.speak_text_async(text).get()
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print("✅ Azure Audio Generated (Powered by Gemini Text)!")
+            print("✅ Azure Audio Generated (Human-Like Pacing)!")
             return True
         else:
             details = result.cancellation_details
             print(f"❌ Azure Failed: {details.reason} | {details.error_details}")
+            # If SSML failed, retry with plain text
+            if ssml_script:
+                print("🔄 Retrying with plain text...")
+                result = synthesizer.speak_text_async(text).get()
+                if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                    print("✅ Azure Audio Generated (Plain Text Fallback)!")
+                    return True
             return False
 
     except Exception as e:
