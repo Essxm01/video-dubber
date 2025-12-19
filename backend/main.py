@@ -212,13 +212,35 @@ def smart_transcribe(audio_path: str):
         - Return ONLY the JSON.
         """
 
-        # Generate Content using the new SDK syntax
-        # Using gemini-1.5-flash-002 (Stable) to avoid 404 errors
-        response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash-002',
-            contents=[prompt, file_upload],
-            config={"response_mime_type": "application/json"}
-        )
+        # Generate Content with Fallback Strategy
+        # Try multiple models to ensure robustness against API changes (404 errors)
+        models_to_try = [
+            'gemini-1.5-flash-002',  # Latest Stable Flash
+            'gemini-1.5-flash',      # Generic Alias
+            'gemini-1.5-pro',        # Pro Model (Backup)
+            'gemini-1.5-flash-8b'    # Lightweight (Backup)
+        ]
+
+        response = None
+        last_error = None
+
+        for model_name in models_to_try:
+            try:
+                print(f"🧠 Trying Model: {model_name}...")
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt, file_upload],
+                    config={"response_mime_type": "application/json"}
+                )
+                print(f"✅ Success with model: {model_name}")
+                break # Stop if successful
+            except Exception as e:
+                print(f"⚠️ Model {model_name} failed: {e}")
+                last_error = e
+                continue
+        
+        if not response:
+            raise ValueError(f"All Gemini models failed. Last error: {last_error}")
         
         # Cleanup uploaded file
         try:
