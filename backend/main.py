@@ -213,67 +213,56 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
 # 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
-    
-    if not GEMINI_API_KEY:
-        print("⚠️ Gemini Key missing for TTS.")
-        return False
+
+    print(f"💎 Gemini 2.5 Pro TTS: Acting Scene -> {text[:20]}...")
 
     try:
-        if not client: 
-             print("⚠️ Gemini Client not initialized")
-             return False
+        if not client:
+             raise Exception("Gemini Client not initialized")
 
-        # CRITICAL CHANGE: Use the SPECIALIZED TTS Model found in logs
-        # This model is specifically built for Audio Generation
-        model_name = "gemini-2.0-flash-exp" # Using flash-exp as it is confirmed to work with Audio in V1 SDK
-        
-        print(f"💎 Gemini 2.0 TTS: Acting Scene -> {text[:20]}...")
-
-        # PROMPT: DOCUMENTARY STYLE FUSHA WITH EMOTION
-        prompt = f"""
-        Act as a world-class Arabic Voice Actor (Documentary Narration).
-        Perform the following text in strict Modern Standard Arabic (Fusha).
-        
-        PERFORMANCE GUIDELINES:
-        1. **Tone:** Intelligent, deep, warm, and highly expressive.
-        2. **Acting:** If you encounter cues like [whispering], [sigh], [excited], perform them naturally.
-        3. **Pronunciation:** Perfect Tajweed/Fusha grammar.
-        
-        Input Text:
-        "{text}"
-        """
-        
+        # Use the new SDK syntax
         response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
+            model='gemini-2.5-pro-preview-tts',
+            contents=f"""
+            Act as a professional Arabic Voice Actor (Documentary/Audiobook).
+            Speak the following text in Modern Standard Arabic (Fusha).
+            Perform emotions in brackets [] naturally.
+            
+            Text: "{text}"
+            """,
             config=types.GenerateContentConfig(
-                response_mime_type="audio/mp3"
+                response_mime_type='audio/mp3'
             )
         )
         
-        # Save audio - New SDK returns bytes directly in binary_content or inline_data
-        # We need to handle the response part correctly
-        audio_data = None
-        if response.bytes:
-             audio_data = response.bytes
-        elif response.parts:
-             for part in response.parts:
-                 if part.inline_data:
-                     audio_data = part.inline_data.data
-                     break
-        
-        if audio_data:
-            with open(path, "wb") as f:
-                f.write(audio_data)
-            print("✅ Gemini Audio Generated!")
-            return True
-        else:
-            print("⚠️ No audio data returned")
-            return False
+        # Check if text returned instead of audio
+        if response.text and not response.parts:
+            print("⚠️ Gemini returned text instead of audio.")
+            raise Exception("Received text instead of audio")
+            
+        # Write binary data
+        # Handling the specific binary output for the new SDK
+        with open(path, "wb") as f:
+            f.write(response.parts[0].inline_data.data)
+            
+        print("✅ Gemini Audio Generated (New SDK)!")
+        return True
 
     except Exception as e:
-        print(f"⚠️ Gemini TTS Error: {e}")
-        return False
+        print(f"⚠️ Gemini SDK Error: {e}")
+        # Fallback logic MUST be here to prevent silent video
+        # We will use Edge TTS only as a safety net if Gemini fails
+        print("🔄 Engaging Emergency Fallback (Edge TTS)...")
+        try:
+            clean_text = text.replace("[", "").replace("]", "")
+            # We need to run async edge-tts in sync context or use CLI
+            cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"]
+            subprocess.run(cmd, check=True)
+            print("✅ EdgeTTS Fallback Success")
+            return True
+        except Exception as e2:
+            print(f"❌ Fallback failed: {e2}")
+            return False
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
