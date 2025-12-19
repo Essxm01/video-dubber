@@ -212,26 +212,28 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
     
-    # Ensure API Key is loaded
     if not GEMINI_API_KEY:
         print("⚠️ Gemini Key missing for TTS.")
         return False
 
     try:
-        # CRITICAL: Use Gemini 2.0 Flash Experimental for Native Audio
-        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        # CRITICAL CHANGE: Use the SPECIALIZED TTS Model found in logs
+        # This model is specifically built for Audio Generation
+        model_name = "gemini-2.5-pro-preview-tts" 
         
-        print(f"💎 Gemini 2.0 TTS: Narrating in Fusha -> {text[:20]}...")
+        print(f"💎 Gemini 2.5 Pro TTS: Acting Scene -> {text[:20]}...")
+
+        model = genai.GenerativeModel(model_name)
         
-        # PROMPT FOR FUSHA VOICE ACTING
+        # PROMPT: DOCUMENTARY STYLE FUSHA WITH EMOTION
         prompt = f"""
-        Act as a professional Arabic Documentary Narrator.
-        Generate spoken audio for the provided text.
+        Act as a world-class Arabic Voice Actor (Documentary Narration).
+        Perform the following text in strict Modern Standard Arabic (Fusha).
         
-        RULES:
-        1. **Language:** strict Modern Standard Arabic (Fusha).
-        2. **Tone:** Deep, warm, and professional.
-        3. **Performance:** Read with feeling. If you see [sad], sound sad. If [excited], sound excited.
+        PERFORMANCE GUIDELINES:
+        1. **Tone:** Intelligent, deep, warm, and highly expressive.
+        2. **Acting:** If you encounter cues like [whispering], [sigh], [excited], perform them naturally.
+        3. **Pronunciation:** Perfect Tajweed/Fusha grammar.
         
         Input Text:
         "{text}"
@@ -244,49 +246,16 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             )
         )
         
-        # Save the audio
+        # Save audio
         with open(path, "wb") as f:
             f.write(response.parts[0].inline_data.data)
             
-        print("✅ Gemini 2.0 Success!")
+        print("✅ Gemini 2.5 Pro Audio Generated!")
         return True
 
     except Exception as e:
-        print(f"⚠️ Gemini 2.0 Audio Failed: {e}")
-        
-    # Fallback to Azure TTS (High Quality)
-    if AZURE_SPEECH_KEY:
-        try:
-            print("🔄 Fallback: Azure TTS (High Quality)...")
-            import azure.cognitiveservices.speech as speechsdk
-            
-            speech_config = speechsdk.SpeechConfig(
-                subscription=AZURE_SPEECH_KEY, 
-                region=AZURE_SPEECH_REGION
-            )
-            # Use high-quality Arabic Neural voice
-            speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural"
-            speech_config.set_speech_synthesis_output_format(
-                speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3
-            )
-            
-            clean_text = text.replace("[whispering]", "").replace("[excited]", "").replace("[sad]", "").replace("[sigh]", "")
-            
-            audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
-            synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-            
-            result = synthesizer.speak_text_async(clean_text).get()
-            
-            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                print("✅ Azure TTS Success!")
-                return True
-            else:
-                print(f"⚠️ Azure TTS Failed: {result.reason}")
-        except Exception as e:
-            print(f"❌ Azure TTS Error: {e}")
-    
-    print("❌ All TTS methods failed")
-    return False
+        print(f"⚠️ Gemini TTS Error: {e}")
+        return False
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
