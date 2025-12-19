@@ -348,7 +348,6 @@ def smart_transcribe(audio_path: str):
         print(f"❌ All methods failed: {e_native}")
         
     return []
-from google import genai
 # Initialize Gemini Client (Singleton) with Default API (v1beta)
 try:
     from google import genai
@@ -412,45 +411,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except: return text
 
-def generate_audio_azure(text: str, path: str):
-    try:
-        # Get keys from environment
-        azure_key = os.getenv("AZURE_SPEECH_KEY")
-        azure_region = os.getenv("AZURE_SPEECH_REGION")
-
-        if not azure_key or not azure_region:
-            print("⚠️ Azure keys missing in environment variables!")
-            return False
-
-        print(f"☁️ Azure TTS: Synthesizing -> {text[:20]}...")
-
-        # Configure Azure
-        speech_config = speechsdk.SpeechConfig(subscription=azure_key, region=azure_region)
-        # Set Voice to Egyptian/Arabic Neural (Professional)
-        speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural" 
-
-        # Output config
-        audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
-
-        # Synthesizer
-        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-
-        # Synthesize
-        # Azure handles text cleaning better, but stripping brackets is safer
-        clean_text = text.replace("[", "").replace("]", "")
-        result = synthesizer.speak_text_async(clean_text).get()
-
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print("✅ Azure TTS Success!")
-            return True
-        elif result.reason == speechsdk.ResultReason.Canceled:
-            cancellation_details = result.cancellation_details
-            print(f"❌ Azure Canceled: {cancellation_details.reason}")
-            return False
-
-    except Exception as e:
-        print(f"❌ Azure Error: {e}")
-        return False
+# (Legacy Azure function removed - Logic integrated into Hybrid SSML Pipeline)
 
 # 3. HYBRID PIPELINE: Gemini (SSML Generation) + Azure (TTS)
 def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_name: str = "ar-EG-ShakirNeural") -> bool:
@@ -645,7 +606,29 @@ def get_task_status(task_id: str):
     
     return {"status": "UNKNOWN", "message": "لم يتم العثور على المهمة"}
 
-# Helper to split audio
+# Helper: Smart Speedup (Time-Stretch) using FFmpeg Atempo
+def speed_up_audio(input_path: str, output_path: str, speed_factor: float) -> bool:
+    """
+    Speeds up audio without changing pitch using FFmpeg 'atempo' filter.
+    speed_factor: > 1.0 means faster. Max realistic is ~2.0, cap at 1.5 for clarity.
+    """
+    try:
+        # atempo filter limitations: 0.5 to 2.0. Chain them for higher speeds if needed.
+        # We clamp between 1.0 and 2.0 for safety.
+        factor = max(1.0, min(speed_factor, 2.0))
+        
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-filter:a", f"atempo={factor}",
+            "-vn", output_path
+        ]
+        res = subprocess.run(cmd, capture_output=True)
+        return res.returncode == 0
+    except Exception as e:
+        print(f"⚠️ Speedup failed: {e}")
+        return False
+
+#Helper to split audio
 def split_audio_chunks(audio_path, chunk_length_ms=300000): # 5 mins
     audio = AudioSegment.from_file(audio_path)
     chunks = []
@@ -760,12 +743,40 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{idx}_{i}.mp3")
                 generate_audio_gemini(translated, temp_file, emotion=emotion, voice_name=target_voice)
                 
-                # Sync
+                # Sync & Time-Stretch (V24 Fix: Dynamic Speed Adaptation)
                 start_time_ms = int(segment['start'] * 1000)
-                # end_time_ms = int(segment['end'] * 1000)
+                
+                # Calculate Available Slot Duration
+                # If there is a next segment, slot = (next_start - current_start)
+                # If last segment, slot = (chunk_duration - current_start) or arbitrary buffer
+                max_duration_ms = 99999999 # Default large
+                if i < len(segments) - 1:
+                    max_duration_ms = int((segments[i+1]['start'] * 1000) - start_time_ms)
                 
                 if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
                     segment_audio = AudioSegment.from_file(temp_file)
+                    
+                    # CHECK SPEED
+                    current_len = len(segment_audio)
+                    if current_len > max_duration_ms:
+                        # Calculate required speedup
+                        # Add 10% buffering to be safe
+                        ratio = current_len / max_duration_ms
+                        
+                        # Only speed up if ratio is significant (> 1.05) and not insane (< 1.5)
+                        if ratio > 1.05:
+                            # Cap speed to 1.5x (Human limit for clarity)
+                            speed_factor = min(ratio * 1.05, 1.5) 
+                            
+                            print(f"⚡ Speeding up segment {i} by {speed_factor:.2f}x (Overflow: {current_len}ms > {max_duration_ms}ms)")
+                            
+                            temp_fast = temp_file.replace(".mp3", "_fast.mp3")
+                            if speed_up_audio(temp_file, temp_fast, speed_factor):
+                                segment_audio = AudioSegment.from_file(temp_fast)
+                                try: os.remove(temp_fast)
+                                except: pass
+                            else:
+                                print(f"⚠️ Failed to speed up segment {i}, allowing overlap.")
                 else:
                     segment_audio = AudioSegment.silent(duration=500) # Fallback duration
 
