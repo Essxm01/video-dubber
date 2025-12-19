@@ -230,44 +230,71 @@ def smart_transcribe(audio_path: str):
         print("🔄 Falling back to Gemini Native Audio...")
         segments = [] # Ensure empty to trigger fallback below
 
-    # --- STAGE 2: "THE BRAIN" (Gemini Enrichment) ---
+    # --- STAGE 2: "THE BRAIN" (Gemini Enrichment + Diarization) ---
     if segments:
         try:
-            print("🧠 Gemini: Translating to Fusha & Detecting Emotion...")
+            print("🧠 Gemini: Translating to Fusha & Detecting Speaker/Gender/Emotion...")
             
-            # Prepare compact context for Gemini
-            simplified_segments = [{"id": i, "text": s["text"]} for i, s in enumerate(segments)]
+            # 1. Upload Audio for Gemini to "Hear" the speakers
+            if not gemini_client: raise ValueError("No Gemini Client")
+            
+            # Check if file exists, if not re-upload
+            # For efficiency in V23, we upload once for enrichment
+            gl_file = gemini_client.files.upload(file=audio_path)
+            
+            # Wait for processing
+            while gl_file.state.name == "PROCESSING":
+                time.sleep(1)
+                gl_file = gemini_client.files.get(name=gl_file.name)
+
+            # Prepare compact context for Gemini to align Text <-> Audio
+            simplified_segments = [{"id": i, "start": s["start"], "end": s["end"], "text": s["text"]} for i, s in enumerate(segments)]
             
             prompt = f"""
             You are an expert Dubbing Director.
-            I have a list of timed English segments.
+            I have a list of timed English segments derived from the attached audio.
             
             Task:
-            1. Translate each segment to **Professional Modern Standard Arabic (Fusha)**.
-            2. Detect the EMOTION (Happy, Sad, Excited, Neutral) based on the text context.
-            3. Return a JSON list mapping ID to proper Arabic text and Emotion.
+            1. **Listen** to the audio corresponding to each segment timestamp.
+            2. **Identify the Speaker**:
+               - **Gender**: 'Male' or 'Female'.
+               - **Label**: 'Speaker A', 'Speaker B', etc. (Diarization).
+            3. **Translate** text to **Professional Modern Standard Arabic (Fusha)**.
+            4. **Detect Emotion**: (Happy, Sad, Excited, Neutral, Angry, Whispering).
             
             Input Segments:
             {json.dumps(simplified_segments, ensure_ascii=False)}
             
-            Output Format (Strict JSON):
+            Output Format (Strict JSON Map):
             [
-                {{"id": 0, "ar_text": "الترجمة العربية الفصحى", "emotion": "Neutral"}},
+                {{
+                    "id": 0, 
+                    "ar_text": "...", 
+                    "emotion": "Neutral", 
+                    "gender": "Male", 
+                    "speaker": "Speaker A"
+                }},
                 ...
             ]
             
             Rules:
-            - **No Slang**: Strict Fusha.
-            - **Flow**: Ensure segments flow naturally together.
-            - **Integrity**: Do NOT merge or split lines. Keep IDs matching.
+            - **Strict Logic**: You MUST listen to the audio to determine gender/speaker. Do not guess.
+            - **Consistency**: 'Speaker A' must always have the same Gender.
+            - **Fusha**: No slang.
             """
             
             target_model = discover_best_gemini_model(gemini_client)
+            
+            # Pass BOTH prompt and audio file
             response = gemini_client.models.generate_content(
                 model=target_model,
-                contents=prompt,
+                contents=[prompt, gl_file],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
+            
+            # Cleanup
+            try: gemini_client.files.delete(name=gl_file.name)
+            except: pass
             
             if response.text:
                 enrichment_map = {item['id']: item for item in json.loads(response.text)}
@@ -275,10 +302,17 @@ def smart_transcribe(audio_path: str):
                 # Merge back into original segments
                 for i, seg in enumerate(segments):
                     if i in enrichment_map:
-                        seg['text'] = enrichment_map[i].get('ar_text', seg['text'])
-                        seg['emotion'] = enrichment_map[i].get('emotion', 'neutral')
+                        data = enrichment_map[i]
+                        seg['text'] = data.get('ar_text', seg['text'])
+                        seg['emotion'] = data.get('emotion', 'neutral')
+                        seg['gender'] = data.get('gender', 'Male')
+                        seg['speaker'] = data.get('speaker', 'Speaker A')
+                    else:
+                        # Defaults
+                        seg['gender'] = 'Male'
+                        seg['speaker'] = 'Speaker A'
                 
-                print(f"✅ Gemini Enriched {len(segments)} segments with Fusha & Emotion!")
+                print(f"✅ Gemini Enriched {len(segments)} segments with Multi-Speaker Data!")
                 return segments
                 
         except Exception as e_enrich:
@@ -419,11 +453,11 @@ def generate_audio_azure(text: str, path: str):
         return False
 
 # 3. HYBRID PIPELINE: Gemini (SSML Generation) + Azure (TTS)
-def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> bool:
+def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_name: str = "ar-EG-ShakirNeural") -> bool:
     """Generate human-like audio using Gemini SSML + Azure TTS with emotion awareness."""
     if not text.strip(): return False
 
-    print(f"🚀 SSML Pipeline: Processing -> {text[:25]}... [Emotion: {emotion}]")
+    print(f"🚀 SSML Pipeline: Processing -> {text[:25]}... [Emotion: {emotion}] [Voice: {voice_name}]")
 
     # Map emotion to SSML pacing hints
     emotion_hints = {
@@ -450,10 +484,11 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> boo
                 
                 Emotional Context: The speaker's emotion is "{emotion}".
                 Emotional Pacing Hint: {emotion_instruction}
+                Target Voice: {voice_name}
                 
                 Strict Guidelines:
                 1. **Format:** Output VALID XML/SSML strictly. Start with <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ar-EG"> and end with </speak>.
-                2. **Voice:** Include <voice name="ar-EG-ShakirNeural"> inside the speak tag.
+                2. **Voice:** Include <voice name="{voice_name}"> inside the speak tag.
                 3. **Pauses (Breathing):** Insert <break time="400ms"/> after long sentences or dramatic points. Insert <break time="150ms"/> after commas.
                 4. **Emphasis:** Use <emphasis level="moderate">WORD</emphasis> sparingly for 1-2 important keywords per sentence.
                 5. **Emotion Adaptation:** Apply the emotional pacing hint above to adjust speed/pauses.
@@ -639,8 +674,9 @@ def optimize_segments_for_flow(segments, gap_threshold=0.75, max_chars=280):
         # Calculate time gap between current end and next start
         time_gap = next_seg["start"] - current_group["end"]
         
-        # Merge if: Gap is small AND combined text isn't too long
-        if time_gap < gap_threshold and (len(current_group["text"]) + len(next_seg["text"])) < max_chars:
+        # Merge if: Gap is small AND combined text isn't too long AND Speaker is same
+        same_speaker = current_group.get("speaker") == next_seg.get("speaker")
+        if time_gap < gap_threshold and (len(current_group["text"]) + len(next_seg["text"])) < max_chars and same_speaker:
             # Combine text and extend duration
             current_group["text"] += " " + next_seg["text"]
             current_group["end"] = next_seg["end"]
@@ -688,19 +724,41 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             # Apply Smart Batching to merge close segments for natural flow
             segments = optimize_segments_for_flow(raw_segments)
 
-            # Process Dubbing for this Chunk
+            # Speaker Voice Management (Round-Robin)
+            male_voices = ["ar-EG-ShakirNeural", "ar-SA-HamedNeural", "ar-BH-AliNeural", "ar-YE-SalehNeural"]
+            female_voices = ["ar-EG-SalmaNeural", "ar-SA-ZariyahNeural", "ar-KW-NouraNeural", "ar-QA-AmalNeural"]
+            
+            speaker_registry = {}  # Map "Speaker A" -> "ar-EG-ShakirNeural"
+            
+            # --- LOOP SEGMENTS ---
             chunk_master_audio = AudioSegment.silent(duration=0)
             
             for i, segment in enumerate(segments):
                 # Translate
                 translated = translate_text(segment["text"], target_lang)
                 
-                # Get emotion from Gemini analysis (V21 feature)
+                # Get Metadata
                 emotion = segment.get("emotion", "neutral")
+                gender = segment.get("gender", "Male")
+                param_speaker = segment.get("speaker", "Speaker A")
                 
-                # TTS with emotion-aware SSML
+                # Assign Voice dynamically
+                speaker_key = f"{param_speaker}_{gender}"
+                if speaker_key not in speaker_registry:
+                    # Pick next available voice
+                    if gender.lower() == "female":
+                        # Use hash of key to pick voice consistently-ish
+                        idx = len([k for k in speaker_registry if "Female" in k]) % len(female_voices)
+                        speaker_registry[speaker_key] = female_voices[idx]
+                    else:
+                        idx = len([k for k in speaker_registry if "Male" in k]) % len(male_voices)
+                        speaker_registry[speaker_key] = male_voices[idx]
+                
+                target_voice = speaker_registry[speaker_key]
+                
+                # TTS with emotion-aware SSML + Dynamic Voice
                 temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{idx}_{i}.mp3")
-                generate_audio_gemini(translated, temp_file, emotion=emotion)
+                generate_audio_gemini(translated, temp_file, emotion=emotion, voice_name=target_voice)
                 
                 # Sync
                 start_time_ms = int(segment['start'] * 1000)
