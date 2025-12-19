@@ -518,62 +518,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
     except Exception as e:
         print(f"❌ Task Error: {e}")
         db_update(task_id, "FAILED", 0, f"خطأ: {str(e)}")
-                os.remove(temp_file)
-            except: pass
-            
-        # Final Padding to match video duration
-        video_duration_ms = int(original_video_duration * 1000)
-        current_total = len(master_audio)
 
-        if current_total < video_duration_ms:
-            master_audio += AudioSegment.silent(duration=video_duration_ms - current_total)
-
-        # Export Final Audio
-        merged_audio_path = os.path.join(AUDIO_FOLDER, f"merged_dubbed_{base}.mp3")
-        master_audio.export(merged_audio_path, format="mp3")
-        print("✅ Smart Audio Timeline created with Synchronization.")
-            
-        db_update(task_id, "MERGING", 90, "دمج الفيديو...")
-        output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
-        
-        # Merge using FFmpeg (Simple audio replace since we have a full track now)
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", merged_audio_path,
-            "-c:v", "copy",
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",
-            output_path
-        ], check=True)
-        
-        db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
-        url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
-        
-        if not url:
-            # If upload fails, try to fallback to local URL (for inspection) but warn
-            print("⚠️ Upload failed, falling back to local URL")
-            url = f"/output/{os.path.basename(output_path)}"
-            if not os.path.exists(output_path):
-                 raise Exception("فشل رفع الملف إلى السحابة (Supabase Storage Failed)")
-
-        db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
-        
-        # Cleanup (ONLY if upload successful to keep local debug file)
-        if url.startswith("http"):
-             try:
-                os.remove(video_path)
-                os.remove(audio_path)
-                os.remove(merged_audio_path)
-                # os.remove(output_path) # Keep output for now just in case
-             except: pass
-            
-    except Exception as e:
-        print(f"🔥 FATAL ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        db_update(task_id, "FAILED", 0, f"خطأ: {str(e)[:100]}")
 
 if __name__ == "__main__":
     import uvicorn
