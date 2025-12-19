@@ -972,7 +972,14 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_audio_list, "-c", "copy", "-y", merged_audio_path], check=True)
         
         # 2. Merge Video Parts (The Freeze Frames)
-        final_video_parts = [p.replace(".mp3", ".mp4") for p in final_audio_parts]
+        final_video_parts = []
+        for p in final_audio_parts:
+            if p.endswith("_dubbed.mp3"):
+                # Dubbed chunk: only replace the last extension
+                final_video_parts.append(p.replace("_dubbed.mp3", "_dubbed.mp4"))
+            else:
+                # Raw chunk (no speech): standard replacement
+                final_video_parts.append(p.replace(".mp3", ".mp4"))
         
         concat_video_list = f"vlist_final_{base}.txt"
         with open(concat_video_list, "w") as f:
