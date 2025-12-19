@@ -28,7 +28,26 @@ from dotenv import load_dotenv
 from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
+from pydub.silence import split_on_silence
 import azure.cognitiveservices.speech as speechsdk
+
+def trim_silence(audio: AudioSegment, min_silence_len=300, silence_thresh=-40, keep_silence=50) -> AudioSegment:
+    """
+    Splits audio on silence and recombines with shorter silence.
+    DEFAULT: Trims pauses > 300ms down to 50ms.
+    """
+    try:
+        chunks = split_on_silence(
+            audio,
+            min_silence_len=min_silence_len,
+            silence_thresh=silence_thresh,
+            keep_silence=keep_silence
+        )
+        if not chunks: return audio
+        return sum(chunks)
+    except Exception as e:
+        print(f"⚠️ Silence Trim Warning: {e}")
+        return audio
 from google.genai import types
 
 # Load environment variables
@@ -837,6 +856,9 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 
                 # SAFETY: Normalize
                 segment_audio = segment_audio.set_frame_rate(44100).set_channels(1)
+                
+                # V25: Aggressive Silence Trimming
+                segment_audio = trim_silence(segment_audio)
 
                 # 3. ELASTIC SYNC LOGIC (The Core)
                 original_dur = segment['end'] - segment['start']
@@ -849,67 +871,86 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 # Video Segment Output
                 seg_video_path = os.path.join(AUDIO_FOLDER, f"seg_{base}_{idx}_{i}.mp4")
                 
-                # SCENARIO A: Audio Shorter (Ratio < 1.0) -> Add Silence
+                # SCENARIO A: Audio Shorter (Ratio <= 1.0) -> Add Silence
                 if ratio <= 1.0:
                     extract_video_segment(video_path, global_start, global_end, seg_video_path)
                     chunk_video_parts.append(seg_video_path)
                     
                     # Pad Audio
-                    # required_dur = int(original_dur * 1000)
-                    # if len(segment_audio) < required_dur:
-                    #     segment_audio += AudioSegment.silent(duration=required_dur - len(segment_audio))
-                    chunk_master_audio += segment_audio
-                    # Note: We rely on the GAP logic of next iteration to fill remainder?
-                    # No, gap logic fills pre-start.
-                    # If this audio is short, we simply append it. The loop ends.
-                    # Current cursor moves to seg_end.
-                    # Wait: If audio is 3s and video is 5s. We append 3s audio. Cursor moves to 5s.
-                    # The next gap calculation will start at 5s.
-                    # Missing 2s of audio!
-                    # FIX: We MUST pad audio to match video duration EXACTLY unless we speed it up.
+                    # Fix: We MUST pad audio to match video duration EXACTLY unless we speed it up.
                     pad_needed = int(original_dur * 1000) - len(segment_audio)
                     if pad_needed > 0: segment_audio += AudioSegment.silent(duration=pad_needed)
-                    
-                # SCENARIO B: Audio Slightly Longer (1.0 < Ratio <= 1.3) -> Speed Up (Compress)
-                elif ratio <= 1.3:
-                    print(f"⚡ Elastic Sync: Speeding up segment {i} ({ratio:.2f}x)")
-                    temp_fast = temp_file.replace(".mp3", "_fast.mp3")
-                    # Speed factor = ratio (to fit exactly)
-                    if speed_up_audio(temp_file, temp_fast, ratio):
-                        segment_audio = AudioSegment.from_file(temp_fast).set_frame_rate(44100).set_channels(1)
-                        try: os.remove(temp_fast)
-                        except: pass
-                    
-                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
-                    chunk_video_parts.append(seg_video_path)
-                    chunk_master_audio += segment_audio
-                    
-                # SCENARIO C: Audio WAY Longer (Ratio > 1.3) -> Freeze Video Extension
-                else:
-                    print(f"❄️ Elastic Sync: Freezing Video for segment {i} (Ratio {ratio:.2f}x > 1.3)")
-                    
-                    # 1. Speed up Audio to max 1.3x (to reduce freeze time)
-                    target_audio_dur = generated_dur / 1.3
-                    temp_fast = temp_file.replace(".mp3", "_fast.mp3")
-                    if speed_up_audio(temp_file, temp_fast, 1.3):
-                        segment_audio = AudioSegment.from_file(temp_fast).set_frame_rate(44100).set_channels(1)
-                        try: os.remove(temp_fast)
-                        except: pass
-                    
-                    # 2. Extract Base Video
-                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
-                    chunk_video_parts.append(seg_video_path)
-                    
-                    # 3. Create Freeze Extension
-                    extra_time = (len(segment_audio) / 1000.0) - original_dur
-                    if extra_time > 0:
-                        freeze_video_path = os.path.join(AUDIO_FOLDER, f"freeze_{base}_{idx}_{i}.mp4")
-                        # Use last frame of the JUST GENERATED segment (seg_video_path)
-                        if create_freeze_frame_video(seg_video_path, extra_time, freeze_video_path):
-                            chunk_video_parts.append(freeze_video_path)
-                    
                     chunk_master_audio += segment_audio
 
+                # SCENARIO B: Audio Slightly Longer (1.0 < Ratio <= 1.15) -> Squeeze Audio
+                elif ratio <= 1.15:
+                    db_update(task_id, "PROCESSING", overall_progress, f"⚡ Elastic Sync: Speeding up segment {i+1} ({ratio:.2f}x)")
+                    
+                    # Speed up audio to match video
+                    sped_up_path = os.path.join(AUDIO_FOLDER, f"fast_{base}_{idx}_{i}.mp3")
+                    # We need to speed up by 'ratio' exactly
+                    temp_chunk_path = os.path.join(AUDIO_FOLDER, f"raw_chunk_{base}_{idx}_{i}.mp3")
+                    segment_audio.export(temp_chunk_path, format="mp3")
+                    
+                    if speed_up_audio(temp_chunk_path, sped_up_path, ratio):
+                         segment_audio = AudioSegment.from_file(sped_up_path)
+                         # Verify duration match? It should be close.
+                    
+                    # Video is original
+                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
+                    chunk_video_parts.append(seg_video_path)
+                    chunk_master_audio += segment_audio
+
+                # SCENARIO C: Audio Significantly Longer (Ratio > 1.15) -> Freeze Video
+                else:
+                    db_update(task_id, "PROCESSING", overall_progress, f"❄️ Elastic Sync: Freezing Video for segment {i+1} (Ratio {ratio:.2f}x > 1.15)")
+                    
+                    # 1. Cap Audio Speedup at 1.15x
+                    target_audio_speed = 1.15
+                    sped_up_path = os.path.join(AUDIO_FOLDER, f"fast_{base}_{idx}_{i}.mp3")
+                    temp_chunk_path = os.path.join(AUDIO_FOLDER, f"raw_chunk_{base}_{idx}_{i}.mp3")
+                    segment_audio.export(temp_chunk_path, format="mp3")
+                    
+                    # Speed up only by 1.15x
+                    if speed_up_audio(temp_chunk_path, sped_up_path, target_audio_speed):
+                        segment_audio = AudioSegment.from_file(sped_up_path)
+                    
+                    chunk_master_audio += segment_audio
+                    
+                    # 2. Extend Video (Freeze Frame)
+                    # New Video Duration must match NEW Audio Duration
+                    new_video_duration = len(segment_audio) / 1000.0
+                    
+                    # Calculate how much is original video vs freeze
+                    # effective_speed = 1.15
+                    # Audio was X sec. Now X/1.15 sec.
+                    # Video was Y sec.
+                    # We need X/1.15 video.
+                    # We have Y original video.
+                    # Freeze = (X/1.15) - Y. (If we used full original video).
+                    # But extract_video_segment extracts EXACTLY start to end.
+                    
+                    # Strategy:
+                    # 1. Extract FULL original segment (for motion).
+                    # 2. Freeze the LAST frame of it for the remainder.
+                    
+                    # Part 1: Moving Video (Original Duration)
+                    seg_moving_path = os.path.join(AUDIO_FOLDER, f"seg_move_{base}_{idx}_{i}.mp4")
+                    extract_video_segment(video_path, global_start, global_end, seg_moving_path)
+                    
+                    # Part 2: Freeze Frame (Remainder)
+                    remainder_duration = new_video_duration - original_dur
+                    if remainder_duration > 0:
+                        seg_freeze_path = os.path.join(AUDIO_FOLDER, f"seg_freeze_{base}_{idx}_{i}.mp4")
+                        if create_freeze_frame_video(seg_moving_path, remainder_duration, seg_freeze_path):
+                            chunk_video_parts.append(seg_moving_path)
+                            chunk_video_parts.append(seg_freeze_path)
+                        else:
+                            # Fallback: Just use moving path (Desync warning)
+                            chunk_video_parts.append(seg_moving_path)
+                    else:
+                        chunk_video_parts.append(seg_moving_path)
+                
                 # Update Cursor
                 current_video_cursor = segment['end']
                 
