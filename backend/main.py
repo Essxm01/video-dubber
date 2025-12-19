@@ -161,20 +161,17 @@ def get_video_duration(video_path: str) -> float:
 
 # --- CORE LOGIC ---
 
-# 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 Upgrade)
+# 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FIX)
 def smart_transcribe(audio_path: str):
     """
-    V21 Hybrid: Upload audio directly to Gemini 1.5 Flash for deep analysis.
-    Returns segments with {start, end, text, emotion} for enhanced SSML generation.
-    Falls back to Groq Whisper if Gemini fails.
+    V21 FIX: Uses stable google.generativeai SDK for upload.
+    Captures Emotion + Context from Audio directly.
+    Uses Egyptian Arabic (Ammiya) for natural dubbing.
     """
-    print("🧠 Gemini Native Audio: Deep Analysis Mode...")
+    print("🧠 Gemini Native: Uploading audio for deep analysis...")
     
     try:
-        import time
-        
-        # --- STEP 1: Upload Audio to Gemini ---
-        print("📤 Uploading audio to Gemini...")
+        # 1. Upload File using the standard genai method
         audio_file = genai.upload_file(path=audio_path)
         
         # Wait for processing
@@ -188,30 +185,30 @@ def smart_transcribe(audio_path: str):
         
         print("✅ Audio uploaded successfully!")
 
-        # --- STEP 2: Analyze with Gemini 1.5 Flash ---
+        # 2. The Prompt (Enforcing EGYPTIAN Spirit)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = """
-        You are an expert Dubbing Director and Audio Analyst.
-        Listen to this audio file carefully. Analyze both the WORDS and the EMOTION.
+        You are an expert Dubbing Director.
+        Listen to this audio file carefully.
         
         Task:
         1. Transcribe the speech accurately with timestamps.
-        2. Detect the emotional tone of each segment (neutral, excited, sad, angry, whispering, dramatic, etc.)
-        3. Return a JSON array of segments.
+        2. Translate it to **Egyptian Arabic (Ammiya/Slang)** suitable for natural narration.
+        3. **CRITICAL**: Detect the EMOTION (Happy, Sad, Excited, Neutral, Dramatic, Angry).
         
-        Output Format (JSON ONLY):
+        Format:
         [
-            {"start": 0.0, "end": 2.5, "text": "Original transcribed text", "emotion": "neutral"},
-            {"start": 2.5, "end": 5.0, "text": "Another segment", "emotion": "excited"},
+            {"start": 0.0, "end": 2.5, "text": "اكتب باللهجة المصرية هنا", "emotion": "Excited"},
+            {"start": 2.5, "end": 5.0, "text": "جملة تانية", "emotion": "Neutral"},
             ...
         ]
         
-        Important Rules:
+        Rules:
+        - Do NOT use Fusha (Modern Standard Arabic). Use Egyptian slang like "أيوة"، "عشان"، "كده"، "بس".
+        - Merge short sentences into flowing phrases.
         - Keep timestamps accurate (in seconds).
-        - Merge very short phrases (< 1 second) into longer, natural sentences.
-        - The 'emotion' field helps the TTS engine add appropriate pauses/emphasis.
-        - Return ONLY valid JSON. No explanations.
+        - Return ONLY the JSON. No explanations.
         """
 
         response = model.generate_content(
@@ -221,12 +218,12 @@ def smart_transcribe(audio_path: str):
         
         # Cleanup uploaded file
         try:
-            audio_file.delete()
+            genai.delete_file(audio_file.name)
         except: pass
         
         # Parse response
         segments = json.loads(response.text)
-        print(f"✅ Gemini Analyzed {len(segments)} segments with emotion data!")
+        print(f"✅ Gemini Analyzed {len(segments)} segments (Egyptian Arabic + Emotion)!")
         
         return segments
 
@@ -257,7 +254,6 @@ def smart_transcribe(audio_path: str):
         except Exception as e2:
             print(f"❌ Groq Fallback also failed: {e2}")
             return []
-        return []
 
 from google import genai
 from google.genai import types
