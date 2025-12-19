@@ -362,8 +362,8 @@ class TaskResponse(BaseModel):
     task_id: str
     status: str
 
-@app.post("/upload", response_model=TaskResponse)
-async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), mode: str = Form("DUBBING"), target_lang: str = Form("ar")):
+@app.post("/process-video", response_model=TaskResponse)
+async def process_video_endpoint(background_tasks: BackgroundTasks, file: UploadFile = File(...), mode: str = Form("DUBBING"), target_lang: str = Form("ar")):
     task_id = str(uuid.uuid4())
     path = os.path.join(UPLOAD_FOLDER, f"{task_id}_{file.filename}")
     with open(path, "wb") as f: f.write(await file.read())
@@ -382,156 +382,133 @@ async def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...)
             }).execute()
         except: pass
     
-    db_update(task_id, "PENDING", 0, "جاري التجهيز...")
+    db_update(task_id, "PENDING", 0, "جاري التجهيز (استلام الملف)...")
     background_tasks.add_task(process_video_task, task_id, path, mode, target_lang, file.filename)
     return TaskResponse(task_id=task_id, status="PENDING")
 
-@app.get("/status/{task_id}")
-def status(task_id: str):
-    # First check local storage (most reliable)
-    if task_id in LOCAL_TASKS:
-        return {"id": task_id, **LOCAL_TASKS[task_id]}
-    
-    # Then try Supabase
-    try:
-        sb = get_fresh_supabase()
-        if sb:
-            res = sb.table("projects").select("*").eq("id", task_id).execute()
-            if res.data: return res.data[0]
-    except: pass
-    
-    return {"status": "UNKNOWN"}
-
-def generate_srt_content(segments, translated_texts):
-    srt_content = ""
-    for i, (seg, trans) in enumerate(zip(segments, translated_texts)):
-        start_time = format_timestamp(seg['start'])
-        end_time = format_timestamp(seg['end'])
-        srt_content += f"{i+1}\n{start_time} --> {end_time}\n{trans}\n\n"
-    return srt_content
-
-def format_timestamp(seconds):
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds - int(seconds)) * 1000)
-    return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+# Helper to split audio
+def split_audio_chunks(audio_path, chunk_length_ms=300000): # 5 mins
+    audio = AudioSegment.from_file(audio_path)
+    chunks = []
+    duration_ms = len(audio)
+    for i in range(0, duration_ms, chunk_length_ms):
+        chunk_name = f"{audio_path}_part_{i//chunk_length_ms}.mp3"
+        chunk = audio[i:i+chunk_length_ms]
+        chunk.export(chunk_name, format="mp3")
+        chunks.append(chunk_name)
+    return chunks
 
 async def process_video_task(task_id, video_path, mode, target_lang, filename):
     try:
         base = task_id[:8]
-        audio_path = os.path.join(AUDIO_FOLDER, f"{base}.mp3")
+        full_audio_path = os.path.join(AUDIO_FOLDER, f"{base}.mp3")
         
-        db_update(task_id, "EXTRACTING", 10, "استخراج الصوت...")
-        extract_audio(video_path, audio_path)
+        db_update(task_id, "EXTRACTING", 5, "استخراج الصوت...")
+        extract_audio(video_path, full_audio_path)
         
-        # Get Video Duration for final sync
-        original_video_duration = get_video_duration(video_path)
+        # SMART CHUNKING (RAM SAVER)
+        # Split into 5-minute chunks to avoid OOM on Render Free Tier
+        chunk_files = split_audio_chunks(full_audio_path, chunk_length_ms=300000)
         
-        db_update(task_id, "TRANSCRIBING", 20, "تحليل الكلام...")
-        segments = smart_transcribe(audio_path)
+        final_audio_parts = []
+        total_chunks = len(chunk_files)
         
-        if not segments:
-            db_update(task_id, "FAILED", 0, "فشل تحليل الكلام")
-            return
+        for idx, chunk_path in enumerate(chunk_files):
+            # Update Status
+            overall_progress = 10 + int((idx / total_chunks) * 80)
+            db_update(task_id, "PROCESSING", overall_progress, f"معالجة الجزء {idx+1}/{total_chunks}...")
+            
+            # Smart Transcribe the Chunk
+            segments = smart_transcribe(chunk_path)
+            
+            if not segments:
+                # If no speech, just use the original audio chunk (or silence)
+                final_audio_parts.append(chunk_path) 
+                continue
 
-        # -------------------------------------------
-        # MODE 1: TRANSLATION (Subtitles Only)
-        # -------------------------------------------
-        if mode == "TRANSLATION":
-            translated_texts = []
-            total = len(segments)
+            # Process Dubbing for this Chunk
+            chunk_master_audio = AudioSegment.silent(duration=0)
             
-            for i, seg in enumerate(segments):
-                progress = 20 + int((i / total) * 60)
-                if i % 5 == 0: db_update(task_id, "TRANSLATING", progress, f"ترجمة النصوص {i+1}/{total}...")
-                translated_texts.append(translate_text(seg["text"], target_lang))
-            
-            # Generate SRT
-            srt_content = generate_srt_content(segments, translated_texts)
-            srt_path = os.path.join(OUTPUT_FOLDER, f"subs_{base}.srt")
-            with open(srt_path, "w", encoding="utf-8") as f:
-                f.write(srt_content)
+            for i, segment in enumerate(segments):
+                # Translate
+                translated = translate_text(segment["text"], target_lang)
                 
-            db_update(task_id, "BURNING_SUBS", 90, "دمج الترجمة مع الفيديو...")
-            output_path = os.path.join(OUTPUT_FOLDER, f"subtitled_{base}.mp4")
+                # TTS
+                temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{idx}_{i}.mp3")
+                generate_audio_gemini(translated, temp_file)
+                
+                # Sync
+                start_time_ms = int(segment['start'] * 1000)
+                # end_time_ms = int(segment['end'] * 1000)
+                
+                if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
+                    segment_audio = AudioSegment.from_file(temp_file)
+                else:
+                    segment_audio = AudioSegment.silent(duration=500) # Fallback duration
+
+                # Handle Gaps
+                current_duration = len(chunk_master_audio)
+                gap = start_time_ms - current_duration
+                if gap > 0: chunk_master_audio += AudioSegment.silent(duration=gap)
+                
+                chunk_master_audio += segment_audio
+                
+                # GC
+                try: os.remove(temp_file)
+                except: pass
+
+            # Export Processed Chunk
+            processed_chunk_path = f"{chunk_path}_dubbed.mp3"
+            chunk_master_audio.export(processed_chunk_path, format="mp3")
+            final_audio_parts.append(processed_chunk_path)
             
-            # Burn Subtitles (Hardsub)
-            # Note: For strict Arabic handling, this depends on ffmpeg build. 
-            # Simple force_style for font size and alignment.
-            # Using absolute path for subtitles filter is safer.
-            abs_srt = os.path.abspath(srt_path).replace("\\", "/").replace(":", "\\:")
-            
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-vf", f"subtitles='{abs_srt}':force_style='FontName=Arial,FontSize=24,Alignment=2,Outline=1,Shadow=1'",
-                "-c:a", "copy",
-                output_path
-            ], check=True)
-            
-            db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
-            url = upload_to_storage(output_path, "videos", f"subtitled/final_{base}.mp4", "video/mp4")
-            
-            db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
-            
-            # Cleanup
-            try:
-                os.remove(video_path)
-                os.remove(audio_path)
-                os.remove(srt_path)
+            # Free RAM
+            del chunk_master_audio
+            del segments
+            try: os.remove(chunk_path) # Remove original chunk
             except: pass
-            return
 
-        # -------------------------------------------
-        # MODE 2: DUBBING (Original Logic)
-        # -------------------------------------------
+        # MERGE ALL PARTS
+        db_update(task_id, "MERGING", 90, "دمج الأجزاء النهائية...")
         
-        # Initialize Master Audio Track (pydub)
-        master_audio = AudioSegment.silent(duration=0)
+        concat_list_file = f"list_{base}.txt"
+        with open(concat_list_file, "w") as f:
+            for part in final_audio_parts:
+                f.write(f"file '{os.path.abspath(part)}'\n")
         
-        print("⏳ Starting Smart Sync processing...")
-        total = len(segments)
+        merged_audio_path = os.path.join(AUDIO_FOLDER, f"final_audio_{base}.mp3")
+        subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-c", "copy", "-y", merged_audio_path], check=True)
         
-        for i, segment in enumerate(segments):
-            progress = 20 + int((i / total) * 60)
-            
-            if i % 2 == 0:
-                db_update(task_id, "GENERATING_AUDIO", progress, f"توليد الصوت البشري والمزامنة {i+1}/{total}...")
-            
-            # 1. Translate
-            translated = translate_text(segment["text"], target_lang)
-            
-            # 2. TTS Generation (Temp File)
-            temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{i}.mp3")
-            generate_audio_gemini(translated, temp_file)
-            
-            # 3. Load Audio Segment
-            start_time_ms = int(segment['start'] * 1000)
-            end_time_ms = int(segment['end'] * 1000)
-            original_duration_ms = end_time_ms - start_time_ms
-            
-            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
-                segment_audio = AudioSegment.from_file(temp_file)
-            else:
-                # If TTS failed, add silence for the duration to maintain sync
-                segment_audio = AudioSegment.silent(duration=original_duration_ms)
+        # Merge with Video
+        output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", merged_audio_path,
+            "-c:v", "copy",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+            output_path
+        ], check=True)
+        
+        db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
+        url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
+        
+        db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
+        
+        # Cleanup
+        try:
+            os.remove(video_path)
+            os.remove(full_audio_path)
+            os.remove(merged_audio_path)
+            os.remove(concat_list_file)
+            for p in final_audio_parts: os.remove(p)
+        except: pass
 
-            # --- SYNCHRONIZATION LOGIC ---
-            
-            # 1. Handle Gaps (Silence before this sentence)
-            current_master_duration = len(master_audio)
-            gap_duration = start_time_ms - current_master_duration
-            
-            if gap_duration > 0:
-                # Add silence to sync with the video start time
-                master_audio += AudioSegment.silent(duration=gap_duration)
-            
-            # 2. Append Audio
-            master_audio += segment_audio
-            
-            # Clean up temp file
-            try:
+    except Exception as e:
+        print(f"❌ Task Error: {e}")
+        db_update(task_id, "FAILED", 0, f"خطأ: {str(e)}")
                 os.remove(temp_file)
             except: pass
             
