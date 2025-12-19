@@ -5,12 +5,16 @@ Arab Dubbing API - Version 19.0 (Google Cloud TTS / Gemini)
 - Translation: Google Translate (fast & reliable)
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
+import shutil
+from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
+from typing import Optional, List, Dict
+import uvicorn
 import os
 import uuid
+import json
 import subprocess
 import requests
 from datetime import datetime
@@ -67,22 +71,36 @@ def get_fresh_supabase():
         return None
     except: return None
 
-def db_update(task_id: str, status: str, progress: int, message: str, result: dict = None):
-    data = {"status": status, "progress": progress, "message": message, "updated_at": datetime.now().isoformat()}
-    if result: data["result"] = result
+# Helper: Update DB & Local State (Now with Supabase Storage Persistence)
+def db_update(task_id, status, progress=0, message="", result=None):
+    # 1. Update Local Memory
+    LOCAL_TASKS[task_id] = {
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "result": result
+    }
     
-    # Always update local storage (reliable)
-    if task_id not in LOCAL_TASKS:
-        LOCAL_TASKS[task_id] = {}
-    LOCAL_TASKS[task_id].update(data)
-    print(f"📊 {status} {progress}%: {message}")
-    
-    # Also try Supabase
+    # 2. Update Supabase Storage (Persistent JSON)
     try:
         sb = get_fresh_supabase()
         if sb:
-            sb.table("projects").update(data).eq("id", task_id).execute()
-    except: pass
+            payload = {
+                "id": task_id,
+                "status": status,
+                "progress": progress,
+                "message": message,
+                "result": result,
+                "last_updated": datetime.now().isoformat()
+            }
+            # Upload to 'videos' bucket in 'jobs/' folder
+            sb.storage.from_("videos").upload(
+                path=f"jobs/{task_id}.json",
+                file=json.dumps(payload).encode(),
+                file_options={"upsert": "true", "content-type": "application/json"}
+            )
+    except Exception as e:
+        print(f"⚠️ Status persist failed: {e}")
 
 def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type: str) -> str:
     try:
@@ -280,7 +298,7 @@ def generate_audio_gemini(text: str, path: str) -> bool:
                    - Add diacritics *ONLY* on words where ambiguity exists (e.g., Passive voice vs Active voice).
                    - Rely on the natural context for standard words.
                 
-                3. **Clarity:** Avoid acting cues (like [silence]). Output only the text to be spoken.
+                3. **Clean:** Remove all acting cues (like [silence]). Output only the text to be spoken.
                 
                 Input: "{text}"
                 """,
@@ -289,7 +307,7 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             if response.text:
                 optimized_text = response.text.strip()
                 # Safety fallback: If Gemini hallucinated a list, stick to original text processing
-                if "/" in optimized_text and len(optimized_text) < 50: 
+                if optimized_text.count('/') > 3 and len(optimized_text) < 50: 
                      # Basic heuristic: if output is short and full of slashes like "Anta/Anti", use simplified version
                      print("⚠️ Detected potential list hallucination. Using safe cleaning.")
                      optimized_text = text
