@@ -1,28 +1,32 @@
 """
-Arab Dubbing API - Version 19.0 (Google Cloud TTS / Gemini)
-- TTS: Google Cloud TTS (Neural/Wavenet) → Edge TTS (Fallback)
-- STT: Groq Whisper
-- Translation: Google Translate (fast & reliable)
+Arab Dubbing API - Version 20.0 (Hybrid: Gemini + Azure TTS)
+- TTS: Azure Speech Services (ar-EG-ShakirNeural)
+- STT: Groq Whisper (Large V3)
+- Translation: Gemini 2.0 Flash + Google Translate (Fallback)
+- Text Optimization: Gemini (Smart Tashkeel + Safety)
 """
 
+import os
+import gc
+import json
+import uuid
 import shutil
+import subprocess
+import traceback
+from datetime import datetime
+from typing import Optional, List, Dict
+
 from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, List, Dict
 import uvicorn
-import os
-import uuid
-import json
-import subprocess
-import requests
-from datetime import datetime
+
 from dotenv import load_dotenv
 from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
-import math
 import azure.cognitiveservices.speech as speechsdk
 
 # Load environment variables
@@ -57,7 +61,17 @@ app.mount("/output", StaticFiles(directory=OUTPUT_FOLDER), name="output")
 
 @app.get("/health")
 def health():
-    return {"status": "active", "version": "19.0.0", "engine": "Groq + Google Cloud TTS (Gemini)"}
+    return {
+        "status": "active", 
+        "version": "20.0.0", 
+        "engine": "Groq + Gemini + Azure TTS",
+        "services": {
+            "groq": bool(GROQ_API_KEY),
+            "gemini": bool(GEMINI_API_KEY),
+            "azure_tts": bool(AZURE_SPEECH_KEY),
+            "supabase": bool(SUPABASE_URL and SUPABASE_KEY)
+        }
+    }
 
 # --- LOCAL TASK STORAGE (reliable fallback) ---
 LOCAL_TASKS = {}
@@ -101,6 +115,9 @@ def db_update(task_id, status, progress=0, message="", result=None):
             )
     except Exception as e:
         print(f"⚠️ Status persist failed: {e}")
+    
+    # Also log to console for debugging
+    print(f"📊 [{task_id[:8]}] {status} {progress}%: {message}")
 
 def upload_to_storage(file_path: str, bucket: str, dest_name: str, content_type: str) -> str:
     try:
@@ -166,16 +183,12 @@ def smart_transcribe(audio_path: str):
 from google import genai
 from google.genai import types
 
-# Initialize Gemini Client
-client = None
-client = None
-# Initialize Gemini Client
-client = None
+# Initialize Gemini Client (Singleton)
+gemini_client = None
 if GEMINI_API_KEY:
     try:
-        # Standard Client Init (v1/v1beta automatic) compatible with Text Generation
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        print("🔍 Gemini SDK (google-genai) Initialized.")
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("✅ Gemini SDK (google-genai) Initialized.")
     except Exception as e:
         print(f"⚠️ Failed to init Gemini SDK: {e}")
 
@@ -195,7 +208,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
     
     for model_name in models_to_try:
         try:
-            if not client: break
+            if not gemini_client: break
             
             # STRICT PROMPT: Modern Standard Arabic (Fusha)
             prompt = f"""
@@ -212,7 +225,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
             """
             
             # Note: translate_text might not need v1beta specifically, but using the same client is fine.
-            response = client.models.generate_content(
+            response = gemini_client.models.generate_content(
                 model=model_name,
                 contents=prompt
             )
@@ -283,8 +296,8 @@ def generate_audio_gemini(text: str, path: str) -> bool:
     # We ask Gemini to ensure the text is perfect Fusha and ready for TTS
     optimized_text = text
     try:
-        if client:
-            response = client.models.generate_content(
+        if gemini_client:
+            response = gemini_client.models.generate_content(
                 model='gemini-2.0-flash', # Use the fast, smart text model
                 contents=f"""
                 Role: Senior Dubbing Scriptwriter (Arabic).
@@ -412,6 +425,25 @@ async def process_video_endpoint(background_tasks: BackgroundTasks, file: Upload
     db_update(task_id, "PENDING", 0, "جاري التجهيز (استلام الملف)...")
     background_tasks.add_task(process_video_task, task_id, path, mode, target_lang, file.filename)
     return TaskResponse(task_id=task_id, status="PENDING")
+
+@app.get("/status/{task_id}")
+def get_task_status(task_id: str):
+    """Get job status from local memory or Supabase Storage."""
+    # 1. Check local memory (fastest)
+    if task_id in LOCAL_TASKS:
+        return {"id": task_id, **LOCAL_TASKS[task_id]}
+    
+    # 2. Try Supabase Storage (persistent)
+    try:
+        sb = get_fresh_supabase()
+        if sb:
+            res = sb.storage.from_("videos").download(f"jobs/{task_id}.json")
+            if res:
+                return json.loads(res)
+    except Exception as e:
+        print(f"⚠️ Status fetch failed: {e}")
+    
+    return {"status": "UNKNOWN", "message": "لم يتم العثور على المهمة"}
 
 # Helper to split audio
 def split_audio_chunks(audio_path, chunk_length_ms=300000): # 5 mins
