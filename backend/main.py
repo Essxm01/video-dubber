@@ -706,6 +706,13 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 try: os.remove(temp_file)
                 except: pass
 
+            # CRITICAL FIX: Pad chunk to original duration to prevent sync drift or video truncation
+            original_chunk_audio = AudioSegment.from_file(chunk_path)
+            original_duration = len(original_chunk_audio)
+            if len(chunk_master_audio) < original_duration:
+                silence_padding = original_duration - len(chunk_master_audio)
+                chunk_master_audio += AudioSegment.silent(duration=silence_padding)
+            
             # Export Processed Chunk
             processed_chunk_path = f"{chunk_path}_dubbed.mp3"
             chunk_master_audio.export(processed_chunk_path, format="mp3")
@@ -713,6 +720,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             
             # Free RAM
             del chunk_master_audio
+            del original_chunk_audio
             del segments
             try: os.remove(chunk_path) # Remove original chunk
             except: pass
@@ -728,7 +736,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         merged_audio_path = os.path.join(AUDIO_FOLDER, f"final_audio_{base}.mp3")
         subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-c", "copy", "-y", merged_audio_path], check=True)
         
-        # Merge with Video
+        # Merge with Video (Remove -shortest to keep full video length)
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
         subprocess.run([
             "ffmpeg", "-y",
@@ -737,7 +745,7 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             "-c:v", "copy",
             "-map", "0:v:0",
             "-map", "1:a:0",
-            "-shortest",
+            # "-shortest", # Caused video truncation if audio was shorter
             output_path
         ], check=True)
         
