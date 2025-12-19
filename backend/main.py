@@ -164,6 +164,35 @@ def get_video_duration(video_path: str) -> float:
 
 # --- CORE LOGIC ---
 
+# --- HELPER: Dynamic Model Discovery ---
+def discover_best_gemini_model(client):
+    """Dynamically finds the best available Gemini Flash/Pro model to avoid 404s."""
+    target_model = None
+    try:
+        print("🔍 Discovering available Gemini models...")
+        valid_models = []
+        for m in client.models.list(config={'page_size': 100}):
+            methods = getattr(m, 'supported_generation_methods', [])
+            if not methods or 'generateContent' in methods:
+                valid_models.append(m.name)
+        
+        # Prioritize models: 2.0-flash -> 1.5-flash -> 1.5-pro
+        # Added 'gemini-2.0' as top priority for speed and 'preview' variants
+        for candidate in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]:
+            matches = [vm for vm in valid_models if candidate in vm]
+            if matches:
+                matches.sort(reverse=True) # Prefer latest version
+                target_model = matches[0]
+                target_model = target_model.replace("models/", "")
+                print(f"🎯 Dynamic Discovery: Selected model '{target_model}'")
+                return target_model
+                
+    except Exception as e:
+        print(f"⚠️ Model discovery failed: {e}")
+    
+    # Fallback if discovery completely fails
+    return 'gemini-1.5-flash'
+
 # 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FINAL)
 def smart_transcribe(audio_path: str):
     """
@@ -217,37 +246,7 @@ def smart_transcribe(audio_path: str):
         """
 
         # --- DYNAMIC MODEL DISCOVERY (The "Anti-404" Strategy) ---
-        target_model = None
-        
-        # 1. Try to list models dynamically to find a valid 'flash' model
-        try:
-            print("🔍 Discovering available Gemini models...")
-            # Paging through list_models to find a match
-            valid_models = []
-            for m in gemini_client.models.list(config={'page_size': 100}):
-                # Check for supported methods if attribute exists, else assume valid
-                methods = getattr(m, 'supported_generation_methods', [])
-                if not methods or 'generateContent' in methods:
-                    valid_models.append(m.name)
-            
-            # Prioritize models: 1.5-flash -> 1.5-pro -> 2.0-flash
-            for candidate in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.0-pro"]:
-                matches = [vm for vm in valid_models if candidate in vm]
-                if matches:
-                    matches.sort(reverse=True) 
-                    target_model = matches[0] 
-                    target_model = target_model.replace("models/", "")
-                    print(f"🎯 Dynamic Discovery: Selected model '{target_model}'")
-                    break
-                    
-        except Exception as e_discover:
-            print(f"⚠️ Model discovery failed: {e_discover}")
-
-        # 2. Fallback Hardcoded List if Discovery Failed
-        if not target_model:
-            print("⚠️ Dynamic discovery failed, using fallback list.")
-            target_model = 'gemini-1.5-flash' 
-
+        target_model = discover_best_gemini_model(gemini_client)
         print(f"🧠 Generating content using model: {target_model}...")
         
         # Pass file_upload directly (SDK handles the rest)
@@ -428,7 +427,7 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> boo
         if gemini_client:
             response = gemini_client.models.generate_content(
                 # Use safe fallback model for SSML generation
-                model='gemini-1.5-flash',
+                model=discover_best_gemini_model(gemini_client),
                 contents=f"""
                 Role: Expert SSML Audio Engineer (Arabic).
                 Task: Convert the input text into a high-quality SSML script for Azure TTS.
