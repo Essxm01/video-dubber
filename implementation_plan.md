@@ -26,11 +26,25 @@ Implement "Hybrid V21" architecture for the dubbing API. This combines Gemini's 
   - Step 2: Check Ratio logic with new 1.15x limit.
   - Step 3: Ensure video extraction uses precise timestamps.
 
+## V26 Update: Adaptive Concise Translation (New)
+
+**Goal:** Reduce need for speedup/freezing by generating concise Arabic initially.
+**Strategy:**
+
+1. **Prompt Engineering:** Add instructions to key Gemini translation prompts in `translate_text`.
+2. **Instruction:** "Choose concise synonyms that match the duration of the original English text without losing Fusha formal style."
+3. **Examples:** "Instead of 'سأقوم بالذهاب إلى المنزل' (Long), use 'سأذهب للمنزل' (Short/Concise)."
+
+### Files to Modify
+
+#### [MODIFY] [main.py](file:///D:/video-dubber/backend/main.py)
+
+- Update `prompt` in `translate_text` function to include conciseness constraints.
+
 ## Completed Features (V21)
 
 ### 1. Gemini Native Audio Analysis (The Brain)
 
-- **What:** Upload audio directly to Gemini 1.5 Pro using the new `google.genai` SDK.
 - **Output:** JSON with `{start, end, text, emotion}`.
 - **Why:** To capture emotional nuances (e.g., excitement, sadness) that plain text transcription misses.
 - **SDK Upgrade:** Migrated from deprecated `google.generativeai` to `google.genai` (v0.3.0+).

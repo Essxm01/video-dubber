@@ -402,10 +402,13 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
             
             CRITICAL RULES:
             1. Output **ONLY** the translated Arabic text.
-            2. Use correct, formal vocabulary (e.g., "الحافلة" not "الأتوبيس", "جداً" not "أوي").
-            3. Ensure professional sentence structure suitable for a documentary or news broadcast.
-            4. NO "Here is the translation" or metadata.
-            5. Do not wrap output in quotes.
+            2. **CONCISENESS IS KEY:** Choose short, precise synonyms that match the duration of the English text.
+               - Example: Use "سأذهب" instead of "سأقوم بالذهاب".
+               - Example: Use "لذلك" instead of "ولهذا السبب".
+            3. Use correct, formal vocabulary (e.g., "الحافلة" not "الأتوبيس").
+            4. Ensure professional sentence structure suitable for a documentary or news broadcast.
+            5. NO "Here is the translation" or metadata.
+            6. Do not wrap output in quotes.
             """
             
             # Note: translate_text might not need v1beta specifically, but using the same client is fine.

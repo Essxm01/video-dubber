@@ -68,3 +68,8 @@
 - [x] **Strict Speedup Cap:** Limit audio speedup to 1.15x (max 15%) per user request.
 - [x] **Smart Video Freeze:** Refine freeze-frame logic to handle duration mismatches > 15%.
 - [x] **Frame-Accurate Sync:** Ensure video segments are extracted with precise timestamps to prevent AV drift.
+
+## V26: Adaptive Concise Translation (New)
+
+- [x] **Prompt Engineering:** Update System Prompt to prioritize concise Fusha synonyms that match English duration.
+- [x] **Context Awareness:** Instruct Gemini to "simplify without losing meaning" to aid synchronization.

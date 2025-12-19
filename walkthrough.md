@@ -84,3 +84,11 @@ For every sentence, we compare `Duration_Arabic` vs `Duration_Original_Slot`:
 * **Silence Trimming:** Implemented `pydub` trim to remove >200ms silence from generated TTS audio *before* duration checks.
 * **Strict Control:** Reduced max speedup from 30% (1.3x) to **15% (1.15x)** as requested.
 * **Smart Freeze:** Any segment exceeding 15% duration difference now triggers a freeze frame extension, ensuring the *next* sentence starts perfectly aligned with the original video.
+
+## V26: Adaptive Concise Translation (Smart Sync)
+
+**Goal:** Prevent desync before it happens by generating "time-aware" translations.
+
+* **Shift Left Strategy:** Updated Gemini prompts to prioritize **conciseness** over direct literal translation.
+* **Instruction:** "Choose short, precise synonyms that match the duration of the English text." (e.g., 'سأذهب' instead of 'سأقوم بالذهاب').
+* **Result:** Reduces the burden on the mechanical sync tools (Speedup/Freeze), resulting in more natural video flow.
