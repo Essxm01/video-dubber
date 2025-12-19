@@ -161,17 +161,16 @@ def get_video_duration(video_path: str) -> float:
 
 # --- CORE LOGIC ---
 
-# 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FIX)
+# 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FINAL)
 def smart_transcribe(audio_path: str):
     """
-    V21 FIX: Uses stable google.generativeai SDK for upload.
-    Captures Emotion + Context from Audio directly.
-    Uses Egyptian Arabic (Ammiya) for natural dubbing.
+    V21 FINAL FIX: Uses Gemini to transcribe & translate to Professional Fusha.
+    Strictly enforces Standard Arabic (No Slang).
     """
-    print("🧠 Gemini Native: Uploading audio for deep analysis...")
+    print("🧠 Gemini Native: Uploading audio for Professional Fusha Analysis...")
     
     try:
-        # 1. Upload File using the standard genai method
+        # 1. Upload File (Using standard generativeai SDK)
         audio_file = genai.upload_file(path=audio_path)
         
         # Wait for processing
@@ -185,30 +184,30 @@ def smart_transcribe(audio_path: str):
         
         print("✅ Audio uploaded successfully!")
 
-        # 2. The Prompt (Enforcing EGYPTIAN Spirit)
+        # 2. The Prompt (Strictly Fusha / Documentary Style)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = """
-        You are an expert Dubbing Director.
+        You are an expert Documentary Dubbing Director.
         Listen to this audio file carefully.
         
         Task:
-        1. Transcribe the speech accurately with timestamps.
-        2. Translate it to **Egyptian Arabic (Ammiya/Slang)** suitable for natural narration.
-        3. **CRITICAL**: Detect the EMOTION (Happy, Sad, Excited, Neutral, Dramatic, Angry).
+        1. Transcribe the speech accurately.
+        2. Translate it to **Modern Standard Arabic (Fusha/MSA)**.
+        3. **Style**: Use professional, flowing, and narrative Arabic (like National Geographic documentaries). 
+        4. **CRITICAL**: Detect the EMOTION (Happy, Sad, Excited, Neutral) for each segment.
         
         Format:
         [
-            {"start": 0.0, "end": 2.5, "text": "اكتب باللهجة المصرية هنا", "emotion": "Excited"},
-            {"start": 2.5, "end": 5.0, "text": "جملة تانية", "emotion": "Neutral"},
+            {"start": 0.0, "end": 2.5, "text": "النص بالعربية الفصحى السليمة هنا", "emotion": "Neutral"},
             ...
         ]
         
         Rules:
-        - Do NOT use Fusha (Modern Standard Arabic). Use Egyptian slang like "أيوة"، "عشان"، "كده"، "بس".
-        - Merge short sentences into flowing phrases.
-        - Keep timestamps accurate (in seconds).
-        - Return ONLY the JSON. No explanations.
+        - **STRICTLY FORBIDDEN**: Do NOT use Egyptian Slang or any local dialect.
+        - **Avoid Robotic Phrasing**: Do not translate word-for-word. Use proper Arabic conjunctions (و، ف، حيث، بينما) to ensure flow.
+        - Merge short, choppy sentences into meaningful, complete phrases.
+        - Return ONLY the JSON.
         """
 
         response = model.generate_content(
@@ -223,7 +222,7 @@ def smart_transcribe(audio_path: str):
         
         # Parse response
         segments = json.loads(response.text)
-        print(f"✅ Gemini Analyzed {len(segments)} segments (Egyptian Arabic + Emotion)!")
+        print(f"✅ Gemini Analyzed {len(segments)} segments (Professional Fusha + Emotion)!")
         
         return segments
 
