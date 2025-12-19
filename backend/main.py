@@ -29,9 +29,17 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import azure.cognitiveservices.speech as speechsdk
-# Configure google.generativeai SDK for Native Audio Upload
-# if GEMINI_API_KEY:
-#     genai_audio.configure(api_key=GEMINI_API_KEY)
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "westeurope")
 
 app = FastAPI(title="Arab Dubbing API", version="21.0.0")
 
