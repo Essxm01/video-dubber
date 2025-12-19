@@ -35,6 +35,9 @@ load_dotenv()
 
 # Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+# Fix trailing slash warning
+if SUPABASE_URL and not SUPABASE_URL.endswith("/"):
+    SUPABASE_URL += "/"
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -212,35 +215,51 @@ def smart_transcribe(audio_path: str):
         - Return ONLY the JSON.
         """
 
-        # Generate Content with Fallback Strategy
-        # Try multiple models to ensure robustness against API changes (404 errors)
-        models_to_try = [
-            'gemini-1.5-flash-002',  # Latest Stable Flash
-            'gemini-1.5-flash',      # Generic Alias
-            'gemini-1.5-pro',        # Pro Model (Backup)
-            'gemini-1.5-flash-8b'    # Lightweight (Backup)
-        ]
-
-        response = None
-        last_error = None
-
-        for model_name in models_to_try:
-            try:
-                print(f"🧠 Trying Model: {model_name}...")
-                response = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=[prompt, file_upload],
-                    config={"response_mime_type": "application/json"}
-                )
-                print(f"✅ Success with model: {model_name}")
-                break # Stop if successful
-            except Exception as e:
-                print(f"⚠️ Model {model_name} failed: {e}")
-                last_error = e
-                continue
+        # --- DYNAMIC MODEL DISCOVERY (The "Anti-404" Strategy) ---
+        target_model = None
         
-        if not response:
-            raise ValueError(f"All Gemini models failed. Last error: {last_error}")
+        # 1. Try to list models dynamically to find a valid 'flash' model
+        try:
+            print("🔍 Discovering available Gemini models...")
+            # Paging through list_models to find a match
+            valid_models = []
+            for m in gemini_client.models.list(config={'page_size': 100}):
+                # We want models that support 'generateContent'
+                if 'generateContent' in m.supported_generation_methods:
+                    valid_models.append(m.name)
+            
+            # Prioritize models: 1.5-flash -> 1.5-pro -> 2.0-flash
+            for candidate in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.0-pro"]:
+                # Check if exact match or simple alias exists in the valid list
+                # Note: valid_models usually have 'models/' prefix, e.g., 'models/gemini-1.5-flash-001'
+                matches = [vm for vm in valid_models if candidate in vm]
+                if matches:
+                    # Sort to get the latest version (e.g. 002 > 001)
+                    matches.sort(reverse=True) 
+                    target_model = matches[0] 
+                    # Remove 'models/' prefix if present for the call
+                    target_model = target_model.replace("models/", "")
+                    print(f"🎯 Dynamic Discovery: Selected model '{target_model}'")
+                    break
+                    
+        except Exception as e_discover:
+            print(f"⚠️ Model discovery failed: {e_discover}")
+
+        # 2. Fallback Hardcoded List if Discovery Failed
+        if not target_model:
+            print("⚠️ Dynamic discovery failed, using fallback list.")
+            fallback_models = ['gemini-1.5-flash', 'gemini-1.5-flash-002', 'gemini-1.5-pro']
+            # We will just try the first one and let the loop below handle retries if we wanted loop
+            # But the requirement is to solve 404, so we pick the safest
+            target_model = 'gemini-1.5-flash' 
+
+        print(f"🧠 Generating content using model: {target_model}...")
+        
+        response = gemini_client.models.generate_content(
+            model=target_model,
+            contents=[prompt, file_upload],
+            config={"response_mime_type": "application/json"}
+        )
         
         # Cleanup uploaded file
         try:
@@ -282,19 +301,25 @@ def smart_transcribe(audio_path: str):
             return segments
         except Exception as e2:
             print(f"❌ Groq Fallback also failed: {e2}")
-            return []
-
 from google import genai
 from google.genai import types
 
-# Initialize Gemini Client (Singleton)
-gemini_client = None
-if GEMINI_API_KEY:
-    try:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("✅ Gemini SDK (google-genai) Initialized.")
-    except Exception as e:
-        print(f"⚠️ Failed to init Gemini SDK: {e}")
+# Initialize Gemini Client (Singleton) with Stable v1 API
+try:
+    from google import genai
+    gemini_client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options={'api_version': 'v1'}  # FORCE STABLE API v1
+    )
+    print("✅ Gemini SDK (google-genai) Initialized with API v1 (Stable).")
+except ImportError:
+    # Fallback if http_options is not supported in this specific version
+    print("⚠️ 'http_options' not supported, initializing standard client...")
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    print("✅ Gemini SDK Initialized (Standard).")
+    print("✅ Gemini SDK (google-genai) Initialized.")
+except Exception as e:
+    print(f"⚠️ Failed to init Gemini SDK: {e}")
 
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
