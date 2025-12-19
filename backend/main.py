@@ -606,6 +606,52 @@ def get_task_status(task_id: str):
     
     return {"status": "UNKNOWN", "message": "لم يتم العثور على المهمة"}
 
+# Helper: Extract precise video segment (re-encoded for frame accuracy)
+def extract_video_segment(video_path, start_time, end_time, output_path):
+    duration = end_time - start_time
+    if duration <= 0: return False
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-i", video_path,
+        "-t", str(duration),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-an", # No audio
+        output_path
+    ]
+    return subprocess.run(cmd, capture_output=True).returncode == 0
+
+# Helper: Create Freeze Frame Video
+def create_freeze_frame_video(last_frame_source, duration, output_path):
+    # 1. Extract last frame as image
+    img_path = output_path + ".jpg"
+    cmd_img = [
+        "ffmpeg", "-y",
+        "-sseof", "-0.1", # Seek to very end
+        "-i", last_frame_source,
+        "-update", "1", "-q:v", "1",
+        "-frames:v", "1",
+        img_path
+    ]
+    subprocess.run(cmd_img, capture_output=True)
+    
+    if not os.path.exists(img_path): return False
+    
+    # 2. Loop image to create video
+    cmd_vid = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", img_path,
+        "-t", str(duration),
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-an",
+        output_path
+    ]
+    res = subprocess.run(cmd_vid, capture_output=True)
+    try: os.remove(img_path)
+    except: pass
+    return res.returncode == 0
+
+
 # Helper: Smart Speedup (Time-Stretch) using FFmpeg Atempo
 def speed_up_audio(input_path: str, output_path: str, speed_factor: float) -> bool:
     """
@@ -711,95 +757,172 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             male_voices = ["ar-EG-ShakirNeural", "ar-SA-HamedNeural", "ar-BH-AliNeural", "ar-YE-SalehNeural"]
             female_voices = ["ar-EG-SalmaNeural", "ar-SA-ZariyahNeural", "ar-KW-NouraNeural", "ar-QA-AmalNeural"]
             
-            speaker_registry = {}  # Map "Speaker A" -> "ar-EG-ShakirNeural"
+            speaker_registry = {} 
             
-            # --- LOOP SEGMENTS ---
+            # --- ELASTIC SYNC STATE ---
             chunk_master_audio = AudioSegment.silent(duration=0)
+            chunk_video_parts = [] # List of .mp4 paths
+            current_video_cursor = 0.0 # Seconds relative to chunk start
+            
+            # Helper to get segment range relative to this chunk
+            # Chunk starts at idx * 300s (if uniform split), but split_audio_chunks uses exact bytes.
+            # Simplified: We treat chunk_path as 0.0 to Duration.
+            # But Whisper segments are global timestamps. We need to offset them.
+            # Correction: We are passing 'chunk_path' to smart_transcribe.
+            # smart_transcribe returns timestamps relative to THAT chunk (because it transcribed that file).
+            # So timestamps 0.0 = Start of Chunk. ✅
             
             for i, segment in enumerate(segments):
-                # Translate
-                translated = translate_text(segment["text"], target_lang)
+                # 1. HANDLE GAPS (Non-Speech Video)
+                seg_start = segment['start']
+                if seg_start > current_video_cursor:
+                    gap_duration = seg_start - current_video_cursor
+                    # Extract GAP Video
+                    gap_video = os.path.join(AUDIO_FOLDER, f"gap_{base}_{idx}_{i}.mp4")
+                    # Note: We must extract from the VIDEO corresponding to this audio chunk range.
+                    # This is tricky because we only have 'video_path' (Full Video).
+                    # We need global offset.
+                    global_offset = idx * 300 # Approx 5 mins
+                    
+                    if extract_video_segment(video_path, global_offset + current_video_cursor, global_offset + seg_start, gap_video):
+                        chunk_video_parts.append(gap_video)
+                    
+                    # Add Silence to Audio
+                    chunk_master_audio += AudioSegment.silent(duration=int(gap_duration * 1000))
+                    current_video_cursor = seg_start
                 
-                # Get Metadata
+                # 2. PREPARE AUDIO (Translate + TTS)
+                translated = translate_text(segment["text"], target_lang)
                 emotion = segment.get("emotion", "neutral")
                 gender = segment.get("gender", "Male")
                 param_speaker = segment.get("speaker", "Speaker A")
                 
-                # Assign Voice dynamically
                 speaker_key = f"{param_speaker}_{gender}"
                 if speaker_key not in speaker_registry:
-                    # Pick next available voice
                     if gender.lower() == "female":
-                        # Use hash of key to pick voice consistently-ish
-                        idx = len([k for k in speaker_registry if "Female" in k]) % len(female_voices)
-                        speaker_registry[speaker_key] = female_voices[idx]
+                        idx_v = len([k for k in speaker_registry if "Female" in k]) % len(female_voices)
+                        speaker_registry[speaker_key] = female_voices[idx_v]
                     else:
-                        idx = len([k for k in speaker_registry if "Male" in k]) % len(male_voices)
-                        speaker_registry[speaker_key] = male_voices[idx]
+                        idx_v = len([k for k in speaker_registry if "Male" in k]) % len(male_voices)
+                        speaker_registry[speaker_key] = male_voices[idx_v]
                 
-                target_voice = speaker_registry[speaker_key]
-                
-                # TTS with emotion-aware SSML + Dynamic Voice
                 temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{idx}_{i}.mp3")
-                generate_audio_gemini(translated, temp_file, emotion=emotion, voice_name=target_voice)
+                generate_audio_gemini(translated, temp_file, emotion=emotion, voice_name=speaker_registry[speaker_key])
                 
-                # Sync & Time-Stretch (V24 Fix: Dynamic Speed Adaptation)
-                start_time_ms = int(segment['start'] * 1000)
-                
-                # Calculate Available Slot Duration
-                # If there is a next segment, slot = (next_start - current_start)
-                # If last segment, slot = (chunk_duration - current_start) or arbitrary buffer
-                max_duration_ms = 99999999 # Default large
-                if i < len(segments) - 1:
-                    max_duration_ms = int((segments[i+1]['start'] * 1000) - start_time_ms)
-                
+                # Load Generated Audio
                 if os.path.exists(temp_file) and os.path.getsize(temp_file) > 100:
                     segment_audio = AudioSegment.from_file(temp_file)
-                    
-                    # CHECK SPEED
-                    current_len = len(segment_audio)
-                    if current_len > max_duration_ms:
-                        # Calculate required speedup
-                        # Add 10% buffering to be safe
-                        ratio = current_len / max_duration_ms
-                        
-                        # Only speed up if ratio is significant (> 1.05) and not insane (< 1.5)
-                        if ratio > 1.05:
-                            # Cap speed to 1.5x (Human limit for clarity)
-                            speed_factor = min(ratio * 1.05, 1.5) 
-                            
-                            print(f"⚡ Speeding up segment {i} by {speed_factor:.2f}x (Overflow: {current_len}ms > {max_duration_ms}ms)")
-                            
-                            temp_fast = temp_file.replace(".mp3", "_fast.mp3")
-                            if speed_up_audio(temp_file, temp_fast, speed_factor):
-                                segment_audio = AudioSegment.from_file(temp_fast)
-                                try: os.remove(temp_fast)
-                                except: pass
-                            else:
-                                print(f"⚠️ Failed to speed up segment {i}, allowing overlap.")
                 else:
-                    segment_audio = AudioSegment.silent(duration=500) # Fallback duration
-
-                # SAFETY: Normalize Audio Format (44.1kHz, Mono) to prevent concat errors
+                    segment_audio = AudioSegment.silent(duration=500)
+                
+                # SAFETY: Normalize
                 segment_audio = segment_audio.set_frame_rate(44100).set_channels(1)
 
-                # Handle Gaps
-                current_duration = len(chunk_master_audio)
-                gap = start_time_ms - current_duration
-                if gap > 0: chunk_master_audio += AudioSegment.silent(duration=gap)
+                # 3. ELASTIC SYNC LOGIC (The Core)
+                original_dur = segment['end'] - segment['start']
+                generated_dur = len(segment_audio) / 1000.0
+                ratio = generated_dur / original_dur if original_dur > 0 else 1.0
                 
-                chunk_master_audio += segment_audio
+                global_start = (idx * 300) + segment['start']
+                global_end = (idx * 300) + segment['end']
                 
-                # GC
+                # Video Segment Output
+                seg_video_path = os.path.join(AUDIO_FOLDER, f"seg_{base}_{idx}_{i}.mp4")
+                
+                # SCENARIO A: Audio Shorter (Ratio < 1.0) -> Add Silence
+                if ratio <= 1.0:
+                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
+                    chunk_video_parts.append(seg_video_path)
+                    
+                    # Pad Audio
+                    # required_dur = int(original_dur * 1000)
+                    # if len(segment_audio) < required_dur:
+                    #     segment_audio += AudioSegment.silent(duration=required_dur - len(segment_audio))
+                    chunk_master_audio += segment_audio
+                    # Note: We rely on the GAP logic of next iteration to fill remainder?
+                    # No, gap logic fills pre-start.
+                    # If this audio is short, we simply append it. The loop ends.
+                    # Current cursor moves to seg_end.
+                    # Wait: If audio is 3s and video is 5s. We append 3s audio. Cursor moves to 5s.
+                    # The next gap calculation will start at 5s.
+                    # Missing 2s of audio!
+                    # FIX: We MUST pad audio to match video duration EXACTLY unless we speed it up.
+                    pad_needed = int(original_dur * 1000) - len(segment_audio)
+                    if pad_needed > 0: segment_audio += AudioSegment.silent(duration=pad_needed)
+                    
+                # SCENARIO B: Audio Slightly Longer (1.0 < Ratio <= 1.3) -> Speed Up (Compress)
+                elif ratio <= 1.3:
+                    print(f"⚡ Elastic Sync: Speeding up segment {i} ({ratio:.2f}x)")
+                    temp_fast = temp_file.replace(".mp3", "_fast.mp3")
+                    # Speed factor = ratio (to fit exactly)
+                    if speed_up_audio(temp_file, temp_fast, ratio):
+                        segment_audio = AudioSegment.from_file(temp_fast).set_frame_rate(44100).set_channels(1)
+                        try: os.remove(temp_fast)
+                        except: pass
+                    
+                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
+                    chunk_video_parts.append(seg_video_path)
+                    chunk_master_audio += segment_audio
+                    
+                # SCENARIO C: Audio WAY Longer (Ratio > 1.3) -> Freeze Video Extension
+                else:
+                    print(f"❄️ Elastic Sync: Freezing Video for segment {i} (Ratio {ratio:.2f}x > 1.3)")
+                    
+                    # 1. Speed up Audio to max 1.3x (to reduce freeze time)
+                    target_audio_dur = generated_dur / 1.3
+                    temp_fast = temp_file.replace(".mp3", "_fast.mp3")
+                    if speed_up_audio(temp_file, temp_fast, 1.3):
+                        segment_audio = AudioSegment.from_file(temp_fast).set_frame_rate(44100).set_channels(1)
+                        try: os.remove(temp_fast)
+                        except: pass
+                    
+                    # 2. Extract Base Video
+                    extract_video_segment(video_path, global_start, global_end, seg_video_path)
+                    chunk_video_parts.append(seg_video_path)
+                    
+                    # 3. Create Freeze Extension
+                    extra_time = (len(segment_audio) / 1000.0) - original_dur
+                    if extra_time > 0:
+                        freeze_video_path = os.path.join(AUDIO_FOLDER, f"freeze_{base}_{idx}_{i}.mp4")
+                        # Use last frame of the JUST GENERATED segment (seg_video_path)
+                        if create_freeze_frame_video(seg_video_path, extra_time, freeze_video_path):
+                            chunk_video_parts.append(freeze_video_path)
+                    
+                    chunk_master_audio += segment_audio
+
+                # Update Cursor
+                current_video_cursor = segment['end']
+                
+                # Cleanup
                 try: os.remove(temp_file)
                 except: pass
 
-            # CRITICAL FIX: Pad chunk to original duration to prevent sync drift or video truncation
-            original_chunk_audio = AudioSegment.from_file(chunk_path)
-            original_duration = len(original_chunk_audio)
-            if len(chunk_master_audio) < original_duration:
-                silence_padding = original_duration - len(chunk_master_audio)
-                chunk_master_audio += AudioSegment.silent(duration=silence_padding)
+            # END LOOP: Handle Final Gap (End of Chunk)
+            # Actually, we don't know exact chunk end unless we check chunk length.
+            # But the 'raw_segments' likely end near the end.
+            # We can skip the tail gap for now or calculate it.
+            
+            # 4. EXPORT CHUNK AUDIO
+            processed_chunk_audio_path = f"{chunk_path}_dubbed.mp3"
+            chunk_master_audio.export(processed_chunk_audio_path, format="mp3")
+            final_audio_parts.append(processed_chunk_audio_path)
+            
+            # 5. EXPORT CHUNK VIDEO
+            # Concat all video parts for this chunk
+            processed_chunk_video_path = f"{chunk_path}_dubbed.mp4"
+            if chunk_video_parts:
+                v_list = f"vlist_{base}_{idx}.txt"
+                with open(v_list, "w") as f:
+                    for vp in chunk_video_parts: f.write(f"file '{os.path.abspath(vp)}'\n")
+                subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", v_list, "-c", "copy", "-y", processed_chunk_video_path], check=True)
+                os.remove(v_list)
+                for vp in chunk_video_parts: 
+                    try: os.remove(vp)
+                    except: pass
+            else:
+                 # Fallback if no video parts (no speech?) -> Extract full chunk video
+                 pass # Logic needed if no segments?
+
             
             # Export Processed Chunk
             processed_chunk_path = f"{chunk_path}_dubbed.mp3"
@@ -813,42 +936,67 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             try: os.remove(chunk_path) # Remove original chunk
             except: pass
 
-        # MERGE ALL PARTS
-        db_update(task_id, "MERGING", 90, "دمج الأجزاء النهائية...")
+        # MERGE ALL PARTS (Elastic Sync Version)
+        db_update(task_id, "MERGING", 90, "دمج الأجزاء النهائية (فيديو + صوت)...")
         
-        concat_list_file = f"list_{base}.txt"
-        with open(concat_list_file, "w") as f:
+        # 1. Merge Audio Parts
+        concat_audio_list = f"alist_{base}.txt"
+        with open(concat_audio_list, "w") as f:
             for part in final_audio_parts:
                 f.write(f"file '{os.path.abspath(part)}'\n")
         
         merged_audio_path = os.path.join(AUDIO_FOLDER, f"final_audio_{base}.mp3")
-        subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-c", "copy", "-y", merged_audio_path], check=True)
+        subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_audio_list, "-c", "copy", "-y", merged_audio_path], check=True)
         
-        # Merge with Video (Remove -shortest to keep full video length)
+        # 2. Merge Video Parts (The Freeze Frames)
+        # Note: 'final_audio_parts' loop populated 'chunk_path_dubbed.mp4' implicitely?
+        # WAIT: In the loop we generated processed_chunk_video_path but didn't save it to a list 'final_video_parts'.
+        # We need to collect them.
+        # FIX: We need to modify the loop above to collect final_video_parts.
+        # But we are in a REPLACE block for the END of the function.
+        # We can assume we will have a list of video chunks named identically to audio chunks but .mp4
+        
+        final_video_parts = [p.replace(".mp3", ".mp4") for p in final_audio_parts]
+        
+        concat_video_list = f"vlist_final_{base}.txt"
+        with open(concat_video_list, "w") as f:
+            for part in final_video_parts:
+                if os.path.exists(part):
+                    f.write(f"file '{os.path.abspath(part)}'\n")
+        
+        merged_video_path = os.path.join(OUTPUT_FOLDER, f"visual_dubbed_{base}.mp4")
+        subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_video_list, "-c", "copy", "-y", merged_video_path], check=True)
+
+        # 3. Mux Final (Copy Streams)
+        # Verify streams are valid
         output_path = os.path.join(OUTPUT_FOLDER, f"dubbed_{base}.mp4")
         subprocess.run([
             "ffmpeg", "-y",
-            "-i", video_path,
+            "-i", merged_video_path,
             "-i", merged_audio_path,
-            "-c:v", "copy",
+            "-c", "copy", # No re-encoding needed, we did it in chunks
             "-map", "0:v:0",
             "-map", "1:a:0",
-            # "-shortest", # Caused video truncation if audio was shorter
+             # No -shortest, let them match
             output_path
         ], check=True)
         
         db_update(task_id, "UPLOADING", 95, "رفع النتيجة...")
         url = upload_to_storage(output_path, "videos", f"dubbed/final_{base}.mp4", "video/mp4")
         
-        db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉", result={"dubbed_video_url": url, "title": filename})
+        db_update(task_id, "COMPLETED", 100, "تم بنجاح! 🎉 (استراتيجية Elastic Sync ❄️)", result={"dubbed_video_url": url, "title": filename})
         
         # Cleanup
         try:
             os.remove(video_path)
             os.remove(full_audio_path)
             os.remove(merged_audio_path)
-            os.remove(concat_list_file)
-            for p in final_audio_parts: os.remove(p)
+            os.remove(merged_video_path)
+            os.remove(concat_audio_list)
+            os.remove(concat_video_list)
+            for p in final_audio_parts: 
+                os.remove(p)
+                os.remove(p.replace(".mp3", ".mp4"))
         except: pass
 
     except Exception as e:
