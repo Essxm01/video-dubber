@@ -152,8 +152,13 @@ from google.genai import types
 client = None
 if GEMINI_API_KEY:
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        print("🔍 Gemini SDK (google-genai) Initialized.")
+        # CRITICAL: Force 'v1beta' to access Audio Generation features
+        # Without this, the API defaults to v1 and rejects audio requests.
+        client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options={'api_version': 'v1beta'}
+        )
+        print("🔍 Gemini SDK (google-genai v1beta) Initialized.")
     except Exception as e:
         print(f"⚠️ Failed to init Gemini SDK: {e}")
 
@@ -189,6 +194,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
             5. Do not wrap output in quotes.
             """
             
+            # Note: translate_text might not need v1beta specifically, but using the same client is fine.
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt
@@ -254,19 +260,18 @@ def generate_audio_azure(text: str, path: str):
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
 
-    print(f"💎 Gemini 2.5 Pro TTS: Acting Scene -> {text[:20]}...")
+    print(f"💎 Gemini 2.0 Flash (v1beta): Acting Scene -> {text[:20]}...")
 
     try:
         if not client:
              raise Exception("Gemini Client not initialized")
 
-        # Use the new SDK syntax
+        # Request Audio from v1beta
         response = client.models.generate_content(
-            model='gemini-2.5-pro-preview-tts',
+            model='gemini-2.0-flash-exp',
             contents=f"""
-            Act as a professional Arabic Voice Actor (Documentary/Audiobook).
+            Act as a professional Arabic Voice Actor (Documentary Style).
             Speak the following text in Modern Standard Arabic (Fusha).
-            Perform emotions in brackets [] naturally.
             
             Text: "{text}"
             """,
@@ -275,26 +280,25 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             )
         )
         
-        # Check if text returned instead of audio
-        if response.text and not response.parts:
-            print("⚠️ Gemini returned text instead of audio.")
-            raise Exception("Received text instead of audio")
-            
-        # Write binary data
-        # Handling the specific binary output for the new SDK
-        with open(path, "wb") as f:
-            f.write(response.parts[0].inline_data.data)
-            
-        print("✅ Gemini Audio Generated (New SDK)!")
-        return True
+        # Binary handling for v1beta
+        if hasattr(response, 'parts') and response.parts:
+            for part in response.parts:
+                # Check for binary data (inline_data)
+                if part.inline_data:
+                    with open(path, "wb") as f:
+                        f.write(part.inline_data.data)
+                    print("✅ Gemini Audio Generated Successfully (v1beta)!")
+                    return True
+        
+        print("⚠️ Gemini response contained no audio data.")
+        raise Exception("No audio data in response")
 
     except Exception as e:
-        print(f"⚠️ Gemini SDK Error: {e}")
-
-        # --- AZURE FALLBACK ---
-        print("🔄 Engaging Professional Fallback (Azure TTS)...")
-        success = generate_audio_azure(text, path)
-        return success
+        print(f"⚠️ Gemini Beta Error: {e}")
+        
+        # Fallback to Azure (As configured previously)
+        print("🔄 Engaging Azure Fallback...")
+        return generate_audio_azure(text, path)
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
