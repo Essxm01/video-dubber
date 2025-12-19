@@ -29,6 +29,7 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import azure.cognitiveservices.speech as speechsdk
+from google.genai import types
 
 # Load environment variables
 load_dotenv()
