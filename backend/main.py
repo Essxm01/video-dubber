@@ -269,11 +269,15 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             response = client.models.generate_content(
                 model='gemini-2.0-flash', # Use the fast, smart text model
                 contents=f"""
-                Task: Optimize the following text for Text-to-Speech.
-                1. Ensure strict Modern Standard Arabic (Fusha).
-                2. Add full diacritics (Tashkeel) to ensure correct pronunciation.
-                3. Do NOT add acting cues like [laugh] or [sigh] as they break the TTS.
-                4. Output ONLY the processed Arabic text.
+                Role: Expert Arabic Linguist & Tashkeel Specialist.
+                Task: Prepare the following text for a Text-to-Speech engine.
+                
+                Strict Rules:
+                1. **Language:** Convert to high-quality Modern Standard Arabic (Fusha).
+                2. **Diacritics (CRITICAL):** Add FULL Tashkeel (Vowel Marks) to EVERY letter. Do not leave any word without vowels.
+                   - Ensure correct grammar (I'rab) for accurate pronunciation.
+                3. **Simplification:** If a word is archaic or hard to pronounce, replace it with a clearer synonym.
+                4. **Clean:** Remove all acting cues (e.g., [laugh], [sigh]). Output ONLY the vocalized Arabic text.
                 
                 Input: "{text}"
                 """,
