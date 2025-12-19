@@ -933,7 +933,9 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             if chunk_video_parts:
                 v_list = f"vlist_{base}_{idx}.txt"
                 with open(v_list, "w") as f:
-                    for vp in chunk_video_parts: f.write(f"file '{os.path.abspath(vp)}'\n")
+                    for vp in chunk_video_parts: 
+                        sanitized_vp = os.path.abspath(vp).replace("\\", "/")
+                        f.write(f"file '{sanitized_vp}'\n")
                 subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", v_list, "-c", "copy", "-y", processed_chunk_video_path], check=True)
                 os.remove(v_list)
                 for vp in chunk_video_parts: 
@@ -963,26 +965,23 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
         concat_audio_list = f"alist_{base}.txt"
         with open(concat_audio_list, "w") as f:
             for part in final_audio_parts:
-                f.write(f"file '{os.path.abspath(part)}'\n")
+                sanitized_path = os.path.abspath(part).replace("\\", "/")
+                f.write(f"file '{sanitized_path}'\n")
         
         merged_audio_path = os.path.join(AUDIO_FOLDER, f"final_audio_{base}.mp3")
         subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_audio_list, "-c", "copy", "-y", merged_audio_path], check=True)
         
         # 2. Merge Video Parts (The Freeze Frames)
-        # Note: 'final_audio_parts' loop populated 'chunk_path_dubbed.mp4' implicitely?
-        # WAIT: In the loop we generated processed_chunk_video_path but didn't save it to a list 'final_video_parts'.
-        # We need to collect them.
-        # FIX: We need to modify the loop above to collect final_video_parts.
-        # But we are in a REPLACE block for the END of the function.
-        # We can assume we will have a list of video chunks named identically to audio chunks but .mp4
-        
         final_video_parts = [p.replace(".mp3", ".mp4") for p in final_audio_parts]
         
         concat_video_list = f"vlist_final_{base}.txt"
         with open(concat_video_list, "w") as f:
             for part in final_video_parts:
                 if os.path.exists(part):
-                    f.write(f"file '{os.path.abspath(part)}'\n")
+                    sanitized_path = os.path.abspath(part).replace("\\", "/")
+                    f.write(f"file '{sanitized_path}'\n")
+                else:
+                    print(f"⚠️ Warning: Missing video chunk: {part}")
         
         merged_video_path = os.path.join(OUTPUT_FOLDER, f"visual_dubbed_{base}.mp4")
         subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_video_list, "-c", "copy", "-y", merged_video_path], check=True)
