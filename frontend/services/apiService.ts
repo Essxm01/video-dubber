@@ -55,9 +55,9 @@ export const uploadVideo = async (
   formData.append('generate_srt_file', generateSrt ? 'true' : 'false');
 
   try {
-    const response = await axios.post<TaskResponse>(`${API_BASE_URL}/upload`, formData, {
+    const response = await axios.post<TaskResponse>(`${API_BASE_URL}/process-video`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60000, // 60s timeout for upload
+      timeout: 60000, // 60s timeout for initial handshake (job creation)
     });
 
     return {
