@@ -29,7 +29,7 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import azure.cognitiveservices.speech as speechsdk
-import google.generativeai as genai  # V21: Native Audio Analysis
+import google.generativeai as genai_audio  # V21: For Native Audio Upload (upload_file)
 
 # Load environment variables
 load_dotenv()
@@ -38,9 +38,13 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Uses Google Cloud TTS API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
 AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "westeurope")
+
+# Configure google.generativeai SDK for Native Audio Upload
+if GEMINI_API_KEY:
+    genai_audio.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="Arab Dubbing API", version="19.0.0")
 
@@ -170,13 +174,13 @@ def smart_transcribe(audio_path: str):
     print("🧠 Gemini Native: Uploading audio for Professional Fusha Analysis...")
     
     try:
-        # 1. Upload File (Using standard generativeai SDK)
-        audio_file = genai.upload_file(path=audio_path)
+        # 1. Upload File (Using stable google.generativeai SDK)
+        audio_file = genai_audio.upload_file(path=audio_path)
         
         # Wait for processing
         while audio_file.state.name == "PROCESSING":
             time.sleep(1)
-            audio_file = genai.get_file(audio_file.name)
+            audio_file = genai_audio.get_file(audio_file.name)
             print("⏳ Processing audio...")
 
         if audio_file.state.name == "FAILED":
@@ -185,7 +189,7 @@ def smart_transcribe(audio_path: str):
         print("✅ Audio uploaded successfully!")
 
         # 2. The Prompt (Strictly Fusha / Documentary Style)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai_audio.GenerativeModel('gemini-1.5-flash')
         
         prompt = """
         You are an expert Documentary Dubbing Director.
@@ -217,7 +221,7 @@ def smart_transcribe(audio_path: str):
         
         # Cleanup uploaded file
         try:
-            genai.delete_file(audio_file.name)
+            genai_audio.delete_file(audio_file.name)
         except: pass
         
         # Parse response
