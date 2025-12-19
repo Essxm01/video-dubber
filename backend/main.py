@@ -150,15 +150,16 @@ from google.genai import types
 
 # Initialize Gemini Client
 client = None
+client = None
 if GEMINI_API_KEY:
     try:
-        # CRITICAL: Force 'v1beta' to access Audio Generation features
+        # CRITICAL: Force 'v1alpha' to access Audio Generation features
         # Without this, the API defaults to v1 and rejects audio requests.
         client = genai.Client(
             api_key=GEMINI_API_KEY,
-            http_options={'api_version': 'v1beta'}
+            http_options={'api_version': 'v1alpha'}
         )
-        print("🔍 Gemini SDK (google-genai v1beta) Initialized.")
+        print("🔍 Gemini SDK (google-genai v1alpha) Initialized.")
     except Exception as e:
         print(f"⚠️ Failed to init Gemini SDK: {e}")
 
@@ -256,48 +257,50 @@ def generate_audio_azure(text: str, path: str):
         print(f"❌ Azure Error: {e}")
         return False
 
-# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Azure TTS)
+# 3. TTS (Gemini Native Audio -> Fallback Azure TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
 
-    print(f"💎 Gemini 2.0 Flash (v1beta): Acting Scene -> {text[:20]}...")
+    print(f"💎 Gemini 2.0 (v1alpha): Synthesizing Expressive Audio -> {text[:20]}...")
 
     try:
         if not client:
              raise Exception("Gemini Client not initialized")
 
-        # Request Audio from v1beta
+        # Request Audio without specifying a rigid voice name.
+        # This reduces the chance of 400 errors while still keeping the AI acting.
         response = client.models.generate_content(
             model='gemini-2.0-flash-exp',
             contents=f"""
-            Act as a professional Arabic Voice Actor (Documentary Style).
-            Speak the following text in Modern Standard Arabic (Fusha).
+            Role: Expert Arabic Narrator.
+            Task: Speak the text in Modern Standard Arabic (Fusha).
+            Style: Documentary, engaging, and expressive.
             
             Text: "{text}"
             """,
             config=types.GenerateContentConfig(
-                response_mime_type='audio/mp3'
+                response_modalities=["AUDIO"], # Forces Audio Output
+                response_mime_type="audio/mp3"
             )
         )
         
-        # Binary handling for v1beta
-        if hasattr(response, 'parts') and response.parts:
+        # Handle Binary Output
+        if hasattr(response, 'parts'):
             for part in response.parts:
-                # Check for binary data (inline_data)
                 if part.inline_data:
                     with open(path, "wb") as f:
                         f.write(part.inline_data.data)
-                    print("✅ Gemini Audio Generated Successfully (v1beta)!")
+                    print("✅ Gemini Audio Success (Native)!")
                     return True
         
-        print("⚠️ Gemini response contained no audio data.")
-        raise Exception("No audio data in response")
+        print("⚠️ Gemini finished but returned no audio bytes.")
+        raise Exception("Empty Audio Response")
 
     except Exception as e:
-        print(f"⚠️ Gemini Beta Error: {e}")
+        print(f"⚠️ Gemini Generation Failed: {e}")
         
-        # Fallback to Azure (As configured previously)
-        print("🔄 Engaging Azure Fallback...")
+        # --- GUARANTEED FALLBACK: AZURE ---
+        print("🔄 Engaging Azure TTS (Shakir Neural)...")
         return generate_audio_azure(text, path)
 
 # 4. MERGE (Dubbed audio only, no background)
