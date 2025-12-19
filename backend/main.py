@@ -151,15 +151,13 @@ from google.genai import types
 # Initialize Gemini Client
 client = None
 client = None
+# Initialize Gemini Client
+client = None
 if GEMINI_API_KEY:
     try:
-        # CRITICAL: Force 'v1alpha' to access Audio Generation features
-        # Without this, the API defaults to v1 and rejects audio requests.
-        client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options={'api_version': 'v1alpha'}
-        )
-        print("🔍 Gemini SDK (google-genai v1alpha) Initialized.")
+        # Standard Client Init (v1/v1beta automatic) compatible with Text Generation
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        print("🔍 Gemini SDK (google-genai) Initialized.")
     except Exception as e:
         print(f"⚠️ Failed to init Gemini SDK: {e}")
 
@@ -257,51 +255,70 @@ def generate_audio_azure(text: str, path: str):
         print(f"❌ Azure Error: {e}")
         return False
 
-# 3. TTS (Gemini Native Audio -> Fallback Azure TTS)
+# 3. HYBRID PIPELINE: Gemini (Text Opt) + Azure (TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
 
-    print(f"💎 Gemini 2.0 (v1alpha): Synthesizing Expressive Audio -> {text[:20]}...")
+    print(f"🚀 Hybrid Pipeline: Processing segment -> {text[:20]}...")
 
+    # --- STEP 1: Gemini (The Director) - Optimize Text ---
+    # We ask Gemini to ensure the text is perfect Fusha and ready for TTS
+    optimized_text = text
     try:
-        if not client:
-             raise Exception("Gemini Client not initialized")
-
-        # Request Audio without specifying a rigid voice name.
-        # This reduces the chance of 400 errors while still keeping the AI acting.
-        response = client.models.generate_content(
-            model='gemini-2.0-flash-exp',
-            contents=f"""
-            Role: Expert Arabic Narrator.
-            Task: Speak the text in Modern Standard Arabic (Fusha).
-            Style: Documentary, engaging, and expressive.
-            
-            Text: "{text}"
-            """,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"], # Forces Audio Output
-                response_mime_type="audio/mp3"
+        if client:
+            response = client.models.generate_content(
+                model='gemini-2.0-flash', # Use the fast, smart text model
+                contents=f"""
+                Task: Optimize the following text for Text-to-Speech.
+                1. Ensure strict Modern Standard Arabic (Fusha).
+                2. Add full diacritics (Tashkeel) to ensure correct pronunciation.
+                3. Do NOT add acting cues like [laugh] or [sigh] as they break the TTS.
+                4. Output ONLY the processed Arabic text.
+                
+                Input: "{text}"
+                """,
+                config={'response_mime_type': 'text/plain'} # Explicitly ask for TEXT
             )
-        )
+            if response.text:
+                optimized_text = response.text.strip()
+                print(f"💎 Gemini Refined Text: {optimized_text[:30]}...")
+        else:
+             print("⚠️ Gemini Client missing, skipping optimization.")
         
-        # Handle Binary Output
-        if hasattr(response, 'parts'):
-            for part in response.parts:
-                if part.inline_data:
-                    with open(path, "wb") as f:
-                        f.write(part.inline_data.data)
-                    print("✅ Gemini Audio Success (Native)!")
-                    return True
+    except Exception as e:
+        print(f"⚠️ Gemini Text Optimization Failed: {e}")
+        optimized_text = text # Fallback to original text
+
+    # --- STEP 2: Azure (The Voice) - Generate Audio ---
+    try:
+        azure_key = os.getenv("AZURE_SPEECH_KEY")
+        azure_region = os.getenv("AZURE_SPEECH_REGION")
         
-        print("⚠️ Gemini finished but returned no audio bytes.")
-        raise Exception("Empty Audio Response")
+        if not azure_key or not azure_region:
+            print("❌ Azure Keys Missing!")
+            return False
+
+        speech_config = speechsdk.SpeechConfig(subscription=azure_key, region=azure_region)
+        # "ar-EG-ShakirNeural" is the industry standard for Fusha/Documentary
+        speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural" 
+        
+        audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
+        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+
+        # Synthesize the Gemini-Optimized Text
+        result = synthesizer.speak_text_async(optimized_text).get()
+
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            print("✅ Azure Audio Generated (Powered by Gemini Text)!")
+            return True
+        else:
+            details = result.cancellation_details
+            print(f"❌ Azure Failed: {details.reason} | {details.error_details}")
+            return False
 
     except Exception as e:
-        print(f"⚠️ Gemini Generation Failed: {e}")
-        
-        # --- GUARANTEED FALLBACK: AZURE ---
-        print("🔄 Engaging Azure TTS (Shakir Neural)...")
-        return generate_audio_azure(text, path)
+        print(f"❌ Critical Audio Error: {e}")
+        return False
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
