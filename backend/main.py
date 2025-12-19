@@ -19,6 +19,7 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import math
+import azure.cognitiveservices.speech as speechsdk
 
 # Load environment variables
 load_dotenv()
@@ -209,8 +210,47 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
         return GoogleTranslator(source='auto', target=target_lang).translate(text)
     except: return text
 
-# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
-# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Edge TTS)
+def generate_audio_azure(text: str, path: str):
+    try:
+        # Get keys from environment
+        azure_key = os.getenv("AZURE_SPEECH_KEY")
+        azure_region = os.getenv("AZURE_SPEECH_REGION")
+
+        if not azure_key or not azure_region:
+            print("⚠️ Azure keys missing in environment variables!")
+            return False
+
+        print(f"☁️ Azure TTS: Synthesizing -> {text[:20]}...")
+
+        # Configure Azure
+        speech_config = speechsdk.SpeechConfig(subscription=azure_key, region=azure_region)
+        # Set Voice to Egyptian/Arabic Neural (Professional)
+        speech_config.speech_synthesis_voice_name = "ar-EG-ShakirNeural" 
+
+        # Output config
+        audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
+
+        # Synthesizer
+        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+
+        # Synthesize
+        # Azure handles text cleaning better, but stripping brackets is safer
+        clean_text = text.replace("[", "").replace("]", "")
+        result = synthesizer.speak_text_async(clean_text).get()
+
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            print("✅ Azure TTS Success!")
+            return True
+        elif result.reason == speechsdk.ResultReason.Canceled:
+            cancellation_details = result.cancellation_details
+            print(f"❌ Azure Canceled: {cancellation_details.reason}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Azure Error: {e}")
+        return False
+
+# 3. TTS (Gemini Native Audio with Acting Cues -> Fallback Azure TTS)
 def generate_audio_gemini(text: str, path: str) -> bool:
     if not text.strip(): return False
 
@@ -250,19 +290,11 @@ def generate_audio_gemini(text: str, path: str) -> bool:
 
     except Exception as e:
         print(f"⚠️ Gemini SDK Error: {e}")
-        # Fallback logic MUST be here to prevent silent video
-        # We will use Edge TTS only as a safety net if Gemini fails
-        print("🔄 Engaging Emergency Fallback (Edge TTS)...")
-        try:
-            clean_text = text.replace("[", "").replace("]", "")
-            # We need to run async edge-tts in sync context or use CLI
-            cmd = ["edge-tts", "--text", clean_text, "--write-media", path, "--voice", "ar-EG-ShakirNeural"]
-            subprocess.run(cmd, check=True)
-            print("✅ EdgeTTS Fallback Success")
-            return True
-        except Exception as e2:
-            print(f"❌ Fallback failed: {e2}")
-            return False
+
+        # --- AZURE FALLBACK ---
+        print("🔄 Engaging Professional Fallback (Azure TTS)...")
+        success = generate_audio_azure(text, path)
+        return success
 
 # 4. MERGE (Dubbed audio only, no background)
 def merge_audio_video(video_path, audio_files, output_path):
