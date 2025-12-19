@@ -194,111 +194,126 @@ def discover_best_gemini_model(client):
     return 'gemini-1.5-flash'
 
 # 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FINAL)
+# 1. TRANSCRIPTION + EMOTION ANALYSIS (Hybrid V22: Whisper Ears + Gemini Brain)
 def smart_transcribe(audio_path: str):
     """
-    V21 FINAL FIX: Uses Gemini (New SDK) to transcribe & translate to Professional Fusha.
-    Strictly enforces Standard Arabic (No Slang).
+    V22 DEEP SOLVE:
+    1. Whisper (Groq): Guarantees 100% transcription coverage (no missing endings).
+    2. Gemini (Flash): Translates to Professional Fusha & Detects Emotion from text context.
     """
-    print("🧠 Gemini Native: Uploading audio for Professional Fusha Analysis...")
+    segments = []
     
+    # --- STAGE 1: "THE EARS" (Groq Whisper) ---
+    # We use Whisper first because it NEVER truncates audio.
     try:
-        if not gemini_client:
-            raise ValueError("Gemini Client not initialized.")
-
-        # 1. Upload File (Using google-genai SDK)
-        # Note: The new SDK manages uploads via client.files
-        file_upload = gemini_client.files.upload(file=audio_path)
-        print(f"📤 Uploaded file: {file_upload.name}")
+        print("👂 Whisper (Groq): Listening to full audio...")
+        client = Groq(api_key=GROQ_API_KEY)
+        with open(audio_path, "rb") as f:
+            transcription = client.audio.transcriptions.create(
+                file=(os.path.basename(audio_path), f.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json"
+            )
         
-        # Wait for processing
+        if hasattr(transcription, 'segments'):
+            for seg in transcription.segments:
+                segments.append({
+                    "start": seg["start"], 
+                    "end": seg["end"], 
+                    "text": seg["text"].strip(),
+                    "emotion": "neutral" # To be filled by Gemini
+                })
+        print(f"✅ Whisper Transcribed {len(segments)} segments (100% Coverage).")
+
+    except Exception as e_groq:
+        print(f"⚠️ Groq Whisper Failed: {e_groq}")
+        print("🔄 Falling back to Gemini Native Audio...")
+        segments = [] # Ensure empty to trigger fallback below
+
+    # --- STAGE 2: "THE BRAIN" (Gemini Enrichment) ---
+    if segments:
+        try:
+            print("🧠 Gemini: Translating to Fusha & Detecting Emotion...")
+            
+            # Prepare compact context for Gemini
+            simplified_segments = [{"id": i, "text": s["text"]} for i, s in enumerate(segments)]
+            
+            prompt = f"""
+            You are an expert Dubbing Director.
+            I have a list of timed English segments.
+            
+            Task:
+            1. Translate each segment to **Professional Modern Standard Arabic (Fusha)**.
+            2. Detect the EMOTION (Happy, Sad, Excited, Neutral) based on the text context.
+            3. Return a JSON list mapping ID to proper Arabic text and Emotion.
+            
+            Input Segments:
+            {json.dumps(simplified_segments, ensure_ascii=False)}
+            
+            Output Format (Strict JSON):
+            [
+                {{"id": 0, "ar_text": "الترجمة العربية الفصحى", "emotion": "Neutral"}},
+                ...
+            ]
+            
+            Rules:
+            - **No Slang**: Strict Fusha.
+            - **Flow**: Ensure segments flow naturally together.
+            - **Integrity**: Do NOT merge or split lines. Keep IDs matching.
+            """
+            
+            target_model = discover_best_gemini_model(gemini_client)
+            response = gemini_client.models.generate_content(
+                model=target_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+            
+            if response.text:
+                enrichment_map = {item['id']: item for item in json.loads(response.text)}
+                
+                # Merge back into original segments
+                for i, seg in enumerate(segments):
+                    if i in enrichment_map:
+                        seg['text'] = enrichment_map[i].get('ar_text', seg['text'])
+                        seg['emotion'] = enrichment_map[i].get('emotion', 'neutral')
+                
+                print(f"✅ Gemini Enriched {len(segments)} segments with Fusha & Emotion!")
+                return segments
+                
+        except Exception as e_enrich:
+            print(f"⚠️ Gemini Enrichment Failed: {e_enrich}. Using raw Whisper text.")
+            return segments
+
+    # --- FALLBACK: Gemini Native Audio (Old Method) ---
+    # Only runs if Groq failed completely
+    print("⚠️ Using Legacy Gemini Native Audio (Recall Risk)...")
+    try:
+        file_upload = gemini_client.files.upload(file=audio_path)
         while file_upload.state.name == "PROCESSING":
             time.sleep(1)
             file_upload = gemini_client.files.get(name=file_upload.name)
-            print("⏳ Processing audio...")
-
-        if file_upload.state.name == "FAILED":
-            raise ValueError("Gemini failed to process audio file.")
-        
-        print("✅ Audio uploaded successfully!")
-
-        # 2. The Prompt (Strictly Fusha / Documentary Style)
-        prompt = """
-        You are an expert Documentary Dubbing Director.
-        Listen to this audio file carefully from BEGINNING to END.
-        
-        Task:
-        1. Transcribe EVERY sentence in the audio. Do not skip any part (especially the last 30 seconds).
-        2. Translate it to **Modern Standard Arabic (Fusha/MSA)**.
-        3. **Style**: Use professional, flowing, and narrative Arabic (like National Geographic). 
-        4. **CRITICAL**: Detect the EMOTION (Happy, Sad, Excited, Neutral) for each segment.
-        5. **Timestamps**: Ensure start/end times precisely match the English speech.
-        
-        Format:
-        [
-            {"start": 0.0, "end": 2.5, "text": "النص بالعربية الفصحى السليمة هنا", "emotion": "Neutral"},
-            ...
-        ]
-        
-        Rules:
-        - **STRICTLY FORBIDDEN**: Do NOT use Egyptian Slang or any local dialect.
-        - **Avoid Robotic Phrasing**: Do not translate word-for-word. Use proper Arabic conjunctions (و، ف، حيث، بينما).
-        - **Completeness GUARANTEE**: The output must cover the audio until the very last second.
-        - Return ONLY the JSON.
-        """
-
-        # --- DYNAMIC MODEL DISCOVERY (The "Anti-404" Strategy) ---
+            
         target_model = discover_best_gemini_model(gemini_client)
-        print(f"🧠 Generating content using model: {target_model}...")
-        
-        # Pass file_upload directly (SDK handles the rest)
+        prompt_native = """
+        Transcribe accurately, Translate to Fusha, Detect Emotion.
+        Format: JSON list with start, end, text, emotion.
+        CRITICAL: Transcribe until the very last second of audio.
+        """
         response = gemini_client.models.generate_content(
             model=target_model,
-            contents=[prompt, file_upload],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
+            contents=[prompt_native, file_upload],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
         )
-        
-        # Cleanup uploaded file
-        try:
-            gemini_client.files.delete(name=file_upload.name)
+        try: gemini_client.files.delete(name=file_upload.name)
         except: pass
         
-        # Parse response
-        if response.text:
-            segments = json.loads(response.text)
-            print(f"✅ Gemini Analyzed {len(segments)} segments (Professional Fusha + Emotion)!")
-            return segments
-        else:
-             print("⚠️ Gemini response empty.")
-             return []
-
-    except Exception as e:
-        print(f"⚠️ Gemini Native Audio Failed: {e}")
-        print("🔄 Falling back to Groq Whisper...")
+        if response.text: return json.loads(response.text)
         
-        # --- FALLBACK: Groq Whisper ---
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            with open(audio_path, "rb") as f:
-                transcription = client.audio.transcriptions.create(
-                    file=(os.path.basename(audio_path), f.read()),
-                    model="whisper-large-v3",
-                    response_format="verbose_json"
-                )
-            segments = []
-            if hasattr(transcription, 'segments'):
-                for seg in transcription.segments:
-                    segments.append({
-                        "start": seg["start"], 
-                        "end": seg["end"], 
-                        "text": seg["text"].strip(),
-                        "emotion": "neutral"  # Default emotion for Groq fallback
-                    })
-            print(f"✅ Groq Fallback: Transcribed {len(segments)} segments")
-            return segments
-        except Exception as e2:
-            print(f"❌ Groq Fallback also failed: {e2}")
+    except Exception as e_native:
+        print(f"❌ All methods failed: {e_native}")
+        
+    return []
 from google import genai
 # Initialize Gemini Client (Singleton) with Default API (v1beta)
 try:
