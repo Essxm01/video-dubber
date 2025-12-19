@@ -249,15 +249,10 @@ def smart_transcribe(audio_path: str):
 
         print(f"🧠 Generating content using model: {target_model}...")
         
-        # Construct Part from URI (The Correct Way for New SDK)
-        file_part = types.Part.from_uri(
-            file_uri=file_upload.uri,
-            mime_type=file_upload.mime_type
-        )
-
+        # Pass file_upload directly (SDK handles the rest)
         response = gemini_client.models.generate_content(
             model=target_model,
-            contents=[prompt, file_part],
+            contents=[prompt, file_upload],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
             )
@@ -304,24 +299,14 @@ def smart_transcribe(audio_path: str):
         except Exception as e2:
             print(f"❌ Groq Fallback also failed: {e2}")
 from google import genai
-from google.genai import types
-
-# Initialize Gemini Client (Singleton) with Stable v1 API
+# Initialize Gemini Client (Singleton) with Default API (v1beta)
 try:
     from google import genai
-    gemini_client = genai.Client(
-        api_key=GEMINI_API_KEY,
-        http_options={'api_version': 'v1'}  # FORCE STABLE API v1
-    )
-    print("✅ Gemini SDK (google-genai) Initialized with API v1 (Stable).")
-except ImportError:
-    # Fallback if http_options is not supported in this specific version
-    print("⚠️ 'http_options' not supported, initializing standard client...")
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    print("✅ Gemini SDK Initialized (Standard).")
-    print("✅ Gemini SDK (google-genai) Initialized.")
+    print("✅ Gemini SDK (google-genai) Initialized (Default/v1beta).")
 except Exception as e:
     print(f"⚠️ Failed to init Gemini SDK: {e}")
+    gemini_client = None
 
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
