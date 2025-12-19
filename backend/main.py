@@ -748,6 +748,26 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             if not raw_segments:
                 # If no speech, just use the original audio chunk (or silence)
                 final_audio_parts.append(chunk_path) 
+                
+                # IMPORTANT: We MUST create the corresponding VIDEO chunk (chunk_path.mp4)
+                # because the final merge expects .mp4 for every .mp3 in final_audio_parts.
+                
+                # 1. Calc Duration
+                try:
+                    # chunk_path is likely .mp3
+                    chunk_video_target = chunk_path.replace(".mp3", ".mp4")
+                    
+                    # We need exact start/end in video
+                    global_chunk_start = idx * 300 # 300s chunks
+                    
+                    # Get duration of audio chunk
+                    c_aud = AudioSegment.from_file(chunk_path)
+                    dur_sec = len(c_aud) / 1000.0
+                    
+                    extract_video_segment(video_path, global_chunk_start, global_chunk_start + dur_sec, chunk_video_target)
+                except Exception as e:
+                    print(f"⚠️ Error creating fallback video for chunk {idx}: {e}")
+                
                 continue
             
             # Apply Smart Batching to merge close segments for natural flow
@@ -921,7 +941,13 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                     except: pass
             else:
                  # Fallback if no video parts (no speech?) -> Extract full chunk video
-                 pass # Logic needed if no segments?
+                 # This ensures processed_chunk_video_path exists
+                 try:
+                     global_chunk_start = idx * 300
+                     # Use master audio length for sync
+                     dur_sec = len(chunk_master_audio) / 1000.0
+                     extract_video_segment(video_path, global_chunk_start, global_chunk_start + dur_sec, processed_chunk_video_path)
+                 except: pass
 
             
             # Free RAM
