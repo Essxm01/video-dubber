@@ -566,6 +566,41 @@ def split_audio_chunks(audio_path, chunk_length_ms=300000): # 5 mins
         chunks.append(chunk_name)
     return chunks
 
+# --- SMART BATCHING: Merge close segments for natural flow ---
+def optimize_segments_for_flow(segments, gap_threshold=0.75, max_chars=280):
+    """
+    Smart Batching Algorithm:
+    Merges short, close segments into longer flowing paragraphs to prevent robotic pauses.
+    - gap_threshold: Max allowed silence between segments to trigger a merge (seconds).
+    - max_chars: Max length of a single TTS chunk (to maintain sync).
+    """
+    if not segments: return []
+    
+    optimized = []
+    current_group = segments[0].copy()  # Copy to avoid mutating original
+    
+    for next_seg in segments[1:]:
+        # Calculate time gap between current end and next start
+        time_gap = next_seg["start"] - current_group["end"]
+        
+        # Merge if: Gap is small AND combined text isn't too long
+        if time_gap < gap_threshold and (len(current_group["text"]) + len(next_seg["text"])) < max_chars:
+            # Combine text and extend duration
+            current_group["text"] += " " + next_seg["text"]
+            current_group["end"] = next_seg["end"]
+            # Keep the first segment's emotion (or use the more "intense" one)
+            if next_seg.get("emotion") not in ["neutral", None]:
+                current_group["emotion"] = next_seg.get("emotion", "neutral")
+        else:
+            # Push current group and start a new one
+            optimized.append(current_group)
+            current_group = next_seg.copy()
+            
+    optimized.append(current_group)  # Append the final group
+    
+    print(f"🧩 Smart Batching: {len(segments)} -> {len(optimized)} segments (better flow)")
+    return optimized
+
 async def process_video_task(task_id, video_path, mode, target_lang, filename):
     try:
         base = task_id[:8]
@@ -586,13 +621,16 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
             overall_progress = 10 + int((idx / total_chunks) * 80)
             db_update(task_id, "PROCESSING", overall_progress, f"معالجة الجزء {idx+1}/{total_chunks}...")
             
-            # Smart Transcribe the Chunk
-            segments = smart_transcribe(chunk_path)
+            # Smart Transcribe the Chunk (Gemini Native Audio)
+            raw_segments = smart_transcribe(chunk_path)
             
-            if not segments:
+            if not raw_segments:
                 # If no speech, just use the original audio chunk (or silence)
                 final_audio_parts.append(chunk_path) 
                 continue
+            
+            # Apply Smart Batching to merge close segments for natural flow
+            segments = optimize_segments_for_flow(raw_segments)
 
             # Process Dubbing for this Chunk
             chunk_master_audio = AudioSegment.silent(duration=0)
