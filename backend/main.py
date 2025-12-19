@@ -176,9 +176,9 @@ def discover_best_gemini_model(client):
             if not methods or 'generateContent' in methods:
                 valid_models.append(m.name)
         
-        # Prioritize models: 2.0-flash -> 1.5-flash -> 1.5-pro
-        # Added 'gemini-2.0' as top priority for speed and 'preview' variants
-        for candidate in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]:
+        # Prioritize models: 1.5-flash (Most Stable) -> 2.0-flash -> 1.5-pro
+        # Deprioritized 'lite' models to avoid cutoff issues
+        for candidate in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.0-pro"]:
             matches = [vm for vm in valid_models if candidate in vm]
             if matches:
                 matches.sort(reverse=True) # Prefer latest version
@@ -224,13 +224,14 @@ def smart_transcribe(audio_path: str):
         # 2. The Prompt (Strictly Fusha / Documentary Style)
         prompt = """
         You are an expert Documentary Dubbing Director.
-        Listen to this audio file carefully.
+        Listen to this audio file carefully from BEGINNING to END.
         
         Task:
-        1. Transcribe the speech accurately.
+        1. Transcribe EVERY sentence in the audio. Do not skip any part (especially the last 30 seconds).
         2. Translate it to **Modern Standard Arabic (Fusha/MSA)**.
-        3. **Style**: Use professional, flowing, and narrative Arabic (like National Geographic documentaries). 
+        3. **Style**: Use professional, flowing, and narrative Arabic (like National Geographic). 
         4. **CRITICAL**: Detect the EMOTION (Happy, Sad, Excited, Neutral) for each segment.
+        5. **Timestamps**: Ensure start/end times precisely match the English speech.
         
         Format:
         [
@@ -240,8 +241,8 @@ def smart_transcribe(audio_path: str):
         
         Rules:
         - **STRICTLY FORBIDDEN**: Do NOT use Egyptian Slang or any local dialect.
-        - **Avoid Robotic Phrasing**: Do not translate word-for-word. Use proper Arabic conjunctions (و، ف، حيث، بينما) to ensure flow.
-        - Merge short, choppy sentences into meaningful, complete phrases.
+        - **Avoid Robotic Phrasing**: Do not translate word-for-word. Use proper Arabic conjunctions (و، ف، حيث، بينما).
+        - **Completeness GUARANTEE**: The output must cover the audio until the very last second.
         - Return ONLY the JSON.
         """
 
