@@ -213,8 +213,9 @@ def smart_transcribe(audio_path: str):
         """
 
         # Generate Content using the new SDK syntax
+        # Using gemini-1.5-flash-002 (Stable) to avoid 404 errors
         response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-1.5-flash-002',
             contents=[prompt, file_upload],
             config={"response_mime_type": "application/json"}
         )
