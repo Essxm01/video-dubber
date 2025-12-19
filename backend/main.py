@@ -695,6 +695,9 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 else:
                     segment_audio = AudioSegment.silent(duration=500) # Fallback duration
 
+                # SAFETY: Normalize Audio Format (44.1kHz, Mono) to prevent concat errors
+                segment_audio = segment_audio.set_frame_rate(44100).set_channels(1)
+
                 # Handle Gaps
                 current_duration = len(chunk_master_audio)
                 gap = start_time_ms - current_duration
