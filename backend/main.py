@@ -615,7 +615,7 @@ def extract_video_segment(video_path, start_time, end_time, output_path):
         "-ss", str(start_time),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p",
         "-an", # No audio
         output_path
     ]
@@ -924,14 +924,8 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                  pass # Logic needed if no segments?
 
             
-            # Export Processed Chunk
-            processed_chunk_path = f"{chunk_path}_dubbed.mp3"
-            chunk_master_audio.export(processed_chunk_path, format="mp3")
-            final_audio_parts.append(processed_chunk_path)
-            
             # Free RAM
             del chunk_master_audio
-            del original_chunk_audio
             del segments
             try: os.remove(chunk_path) # Remove original chunk
             except: pass
