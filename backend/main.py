@@ -224,20 +224,17 @@ def smart_transcribe(audio_path: str):
             # Paging through list_models to find a match
             valid_models = []
             for m in gemini_client.models.list(config={'page_size': 100}):
-                # We want models that support 'generateContent'
-                if 'generateContent' in m.supported_generation_methods:
+                # Check for supported methods if attribute exists, else assume valid
+                methods = getattr(m, 'supported_generation_methods', [])
+                if not methods or 'generateContent' in methods:
                     valid_models.append(m.name)
             
             # Prioritize models: 1.5-flash -> 1.5-pro -> 2.0-flash
             for candidate in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.0-pro"]:
-                # Check if exact match or simple alias exists in the valid list
-                # Note: valid_models usually have 'models/' prefix, e.g., 'models/gemini-1.5-flash-001'
                 matches = [vm for vm in valid_models if candidate in vm]
                 if matches:
-                    # Sort to get the latest version (e.g. 002 > 001)
                     matches.sort(reverse=True) 
                     target_model = matches[0] 
-                    # Remove 'models/' prefix if present for the call
                     target_model = target_model.replace("models/", "")
                     print(f"🎯 Dynamic Discovery: Selected model '{target_model}'")
                     break
@@ -248,17 +245,22 @@ def smart_transcribe(audio_path: str):
         # 2. Fallback Hardcoded List if Discovery Failed
         if not target_model:
             print("⚠️ Dynamic discovery failed, using fallback list.")
-            fallback_models = ['gemini-1.5-flash', 'gemini-1.5-flash-002', 'gemini-1.5-pro']
-            # We will just try the first one and let the loop below handle retries if we wanted loop
-            # But the requirement is to solve 404, so we pick the safest
             target_model = 'gemini-1.5-flash' 
 
         print(f"🧠 Generating content using model: {target_model}...")
         
+        # Construct Part from URI (The Correct Way for New SDK)
+        file_part = types.Part.from_uri(
+            file_uri=file_upload.uri,
+            mime_type=file_upload.mime_type
+        )
+
         response = gemini_client.models.generate_content(
             model=target_model,
-            contents=[prompt, file_upload],
-            config={"response_mime_type": "application/json"}
+            contents=[prompt, file_part],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
         
         # Cleanup uploaded file
@@ -439,7 +441,8 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> boo
     try:
         if gemini_client:
             response = gemini_client.models.generate_content(
-                model='gemini-2.0-flash',
+                # Use safe fallback model for SSML generation
+                model='gemini-1.5-flash',
                 contents=f"""
                 Role: Expert SSML Audio Engineer (Arabic).
                 Task: Convert the input text into a high-quality SSML script for Azure TTS.
@@ -460,7 +463,9 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> boo
                 Input Text:
                 "{text}"
                 """,
-                config={'response_mime_type': 'text/plain'}
+                config=types.GenerateContentConfig(
+                    response_mime_type='text/plain'
+                )
             )
             if response.text:
                 ssml_script = response.text.strip()
