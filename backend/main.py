@@ -269,15 +269,18 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             response = client.models.generate_content(
                 model='gemini-2.0-flash', # Use the fast, smart text model
                 contents=f"""
-                Role: Expert Arabic Linguist & Tashkeel Specialist.
-                Task: Prepare the following text for a Text-to-Speech engine.
+                Role: Senior Dubbing Scriptwriter (Arabic).
+                Task: Convert the input text into natural, spoken Modern Standard Arabic (Fusha).
                 
-                Strict Rules:
-                1. **Language:** Convert to high-quality Modern Standard Arabic (Fusha).
-                2. **Diacritics (CRITICAL):** Add FULL Tashkeel (Vowel Marks) to EVERY letter. Do not leave any word without vowels.
-                   - Ensure correct grammar (I'rab) for accurate pronunciation.
-                3. **Simplification:** If a word is archaic or hard to pronounce, replace it with a clearer synonym.
-                4. **Clean:** Remove all acting cues (e.g., [laugh], [sigh]). Output ONLY the vocalized Arabic text.
+                Strict Output Rules (Safety First):
+                1. **Flow:** Output must be coherent sentences suitable for narration. 
+                   - CRITICAL: Do NOT output dictionary definitions, word lists, or grammatical conjugations (e.g., do not list "Anta/Anti/Antuma" for "You"). If a word is isolated, translate its most common meaning in context.
+                
+                2. **Pronunciation (Smart Tashkeel):** - Do NOT add Tashkeel to every letter (it confuses the TTS).
+                   - Add diacritics *ONLY* on words where ambiguity exists (e.g., Passive voice vs Active voice).
+                   - Rely on the natural context for standard words.
+                
+                3. **Clarity:** Avoid acting cues (like [silence]). Output only the text to be spoken.
                 
                 Input: "{text}"
                 """,
@@ -285,6 +288,12 @@ def generate_audio_gemini(text: str, path: str) -> bool:
             )
             if response.text:
                 optimized_text = response.text.strip()
+                # Safety fallback: If Gemini hallucinated a list, stick to original text processing
+                if "/" in optimized_text and len(optimized_text) < 50: 
+                     # Basic heuristic: if output is short and full of slashes like "Anta/Anti", use simplified version
+                     print("⚠️ Detected potential list hallucination. Using safe cleaning.")
+                     optimized_text = text
+                
                 print(f"💎 Gemini Refined Text: {optimized_text[:30]}...")
         else:
              print("⚠️ Gemini Client missing, skipping optimization.")
