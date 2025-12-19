@@ -1,15 +1,16 @@
 """
-Arab Dubbing API - Version 20.0 (Hybrid: Gemini + Azure TTS)
-- TTS: Azure Speech Services (ar-EG-ShakirNeural)
-- STT: Groq Whisper (Large V3)
+Arab Dubbing API - Version 21.0 (Hybrid V21: Gemini Brain + Azure Voice)
+- STT: Gemini 1.5 Flash Native Audio (Deep Emotion Analysis) + Groq Whisper (Fallback)
+- TTS: Azure Speech Services (ar-EG-ShakirNeural) + SSML Pacing
 - Translation: Gemini 2.0 Flash + Google Translate (Fallback)
-- Text Optimization: Gemini (Smart Tashkeel + Safety)
+- Text Optimization: Gemini SSML Engineer (Smart Tashkeel + Breathing Pauses)
 """
 
 import os
 import gc
 import json
 import uuid
+import time
 import shutil
 import subprocess
 import traceback
@@ -28,6 +29,7 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import azure.cognitiveservices.speech as speechsdk
+import google.generativeai as genai  # V21: Native Audio Analysis
 
 # Load environment variables
 load_dotenv()
@@ -159,25 +161,102 @@ def get_video_duration(video_path: str) -> float:
 
 # --- CORE LOGIC ---
 
-# 1. TRANSCRIPTION (Groq Whisper)
+# 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 Upgrade)
 def smart_transcribe(audio_path: str):
-    print("🎙️ Using Groq Whisper...")
+    """
+    V21 Hybrid: Upload audio directly to Gemini 1.5 Flash for deep analysis.
+    Returns segments with {start, end, text, emotion} for enhanced SSML generation.
+    Falls back to Groq Whisper if Gemini fails.
+    """
+    print("🧠 Gemini Native Audio: Deep Analysis Mode...")
+    
     try:
-        client = Groq(api_key=GROQ_API_KEY)
-        with open(audio_path, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                file=(os.path.basename(audio_path), f.read()),
-                model="whisper-large-v3",
-                response_format="verbose_json"
-            )
-        segments = []
-        if hasattr(transcription, 'segments'):
-            for seg in transcription.segments:
-                segments.append({"start": seg["start"], "end": seg["end"], "text": seg["text"].strip()})
-        print(f"✅ Transcribed {len(segments)} segments")
+        import time
+        
+        # --- STEP 1: Upload Audio to Gemini ---
+        print("📤 Uploading audio to Gemini...")
+        audio_file = genai.upload_file(path=audio_path)
+        
+        # Wait for processing
+        while audio_file.state.name == "PROCESSING":
+            time.sleep(1)
+            audio_file = genai.get_file(audio_file.name)
+            print("⏳ Processing audio...")
+
+        if audio_file.state.name == "FAILED":
+            raise ValueError("Gemini failed to process audio file.")
+        
+        print("✅ Audio uploaded successfully!")
+
+        # --- STEP 2: Analyze with Gemini 1.5 Flash ---
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = """
+        You are an expert Dubbing Director and Audio Analyst.
+        Listen to this audio file carefully. Analyze both the WORDS and the EMOTION.
+        
+        Task:
+        1. Transcribe the speech accurately with timestamps.
+        2. Detect the emotional tone of each segment (neutral, excited, sad, angry, whispering, dramatic, etc.)
+        3. Return a JSON array of segments.
+        
+        Output Format (JSON ONLY):
+        [
+            {"start": 0.0, "end": 2.5, "text": "Original transcribed text", "emotion": "neutral"},
+            {"start": 2.5, "end": 5.0, "text": "Another segment", "emotion": "excited"},
+            ...
+        ]
+        
+        Important Rules:
+        - Keep timestamps accurate (in seconds).
+        - Merge very short phrases (< 1 second) into longer, natural sentences.
+        - The 'emotion' field helps the TTS engine add appropriate pauses/emphasis.
+        - Return ONLY valid JSON. No explanations.
+        """
+
+        response = model.generate_content(
+            [prompt, audio_file],
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        # Cleanup uploaded file
+        try:
+            audio_file.delete()
+        except: pass
+        
+        # Parse response
+        segments = json.loads(response.text)
+        print(f"✅ Gemini Analyzed {len(segments)} segments with emotion data!")
+        
         return segments
+
     except Exception as e:
-        print(f"❌ Groq Failed: {e}")
+        print(f"⚠️ Gemini Native Audio Failed: {e}")
+        print("🔄 Falling back to Groq Whisper...")
+        
+        # --- FALLBACK: Groq Whisper ---
+        try:
+            client = Groq(api_key=GROQ_API_KEY)
+            with open(audio_path, "rb") as f:
+                transcription = client.audio.transcriptions.create(
+                    file=(os.path.basename(audio_path), f.read()),
+                    model="whisper-large-v3",
+                    response_format="verbose_json"
+                )
+            segments = []
+            if hasattr(transcription, 'segments'):
+                for seg in transcription.segments:
+                    segments.append({
+                        "start": seg["start"], 
+                        "end": seg["end"], 
+                        "text": seg["text"].strip(),
+                        "emotion": "neutral"  # Default emotion for Groq fallback
+                    })
+            print(f"✅ Groq Fallback: Transcribed {len(segments)} segments")
+            return segments
+        except Exception as e2:
+            print(f"❌ Groq Fallback also failed: {e2}")
+            return []
         return []
 
 from google import genai
@@ -287,11 +366,23 @@ def generate_audio_azure(text: str, path: str):
         return False
 
 # 3. HYBRID PIPELINE: Gemini (SSML Generation) + Azure (TTS)
-def generate_audio_gemini(text: str, path: str) -> bool:
-    """Generate human-like audio using Gemini SSML + Azure TTS."""
+def generate_audio_gemini(text: str, path: str, emotion: str = "neutral") -> bool:
+    """Generate human-like audio using Gemini SSML + Azure TTS with emotion awareness."""
     if not text.strip(): return False
 
-    print(f"🚀 SSML Pipeline: Processing -> {text[:25]}...")
+    print(f"🚀 SSML Pipeline: Processing -> {text[:25]}... [Emotion: {emotion}]")
+
+    # Map emotion to SSML pacing hints
+    emotion_hints = {
+        "neutral": "Normal pacing, natural flow.",
+        "excited": "Slightly faster pace, more emphasis on key words.",
+        "sad": "Slower pace, longer pauses, softer emphasis.",
+        "angry": "Faster pace, strong emphasis, short pauses.",
+        "whispering": "Very slow pace, use <prosody volume='soft'>.",
+        "dramatic": "Dramatic pauses (600ms), strong emphasis on 2-3 words.",
+        "happy": "Slightly faster, upbeat rhythm, light emphasis."
+    }
+    emotion_instruction = emotion_hints.get(emotion, emotion_hints["neutral"])
 
     # --- STEP 1: Gemini (SSML Engineer) - Generate SSML Script ---
     ssml_script = None
@@ -303,12 +394,15 @@ def generate_audio_gemini(text: str, path: str) -> bool:
                 Role: Expert SSML Audio Engineer (Arabic).
                 Task: Convert the input text into a high-quality SSML script for Azure TTS.
                 
+                Emotional Context: The speaker's emotion is "{emotion}".
+                Emotional Pacing Hint: {emotion_instruction}
+                
                 Strict Guidelines:
                 1. **Format:** Output VALID XML/SSML strictly. Start with <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ar-EG"> and end with </speak>.
                 2. **Voice:** Include <voice name="ar-EG-ShakirNeural"> inside the speak tag.
                 3. **Pauses (Breathing):** Insert <break time="400ms"/> after long sentences or dramatic points. Insert <break time="150ms"/> after commas.
                 4. **Emphasis:** Use <emphasis level="moderate">WORD</emphasis> sparingly for 1-2 important keywords per sentence.
-                5. **Pacing:** Keep the flow natural. Do NOT over-use tags. Less is more.
+                5. **Emotion Adaptation:** Apply the emotional pacing hint above to adjust speed/pauses.
                 6. **Language:** Modern Standard Arabic (Fusha) with *Smart Tashkeel* on ambiguous words only.
                 7. **Content:** Translate the input accurately. Do not add intro/outro or explanations.
                 8. **Safety:** Do NOT output lists, conjugations, or definitions. Only the SSML script.
@@ -507,9 +601,12 @@ async def process_video_task(task_id, video_path, mode, target_lang, filename):
                 # Translate
                 translated = translate_text(segment["text"], target_lang)
                 
-                # TTS
+                # Get emotion from Gemini analysis (V21 feature)
+                emotion = segment.get("emotion", "neutral")
+                
+                # TTS with emotion-aware SSML
                 temp_file = os.path.join(AUDIO_FOLDER, f"temp_{base}_{idx}_{i}.mp3")
-                generate_audio_gemini(translated, temp_file)
+                generate_audio_gemini(translated, temp_file, emotion=emotion)
                 
                 # Sync
                 start_time_ms = int(segment['start'] * 1000)
