@@ -29,24 +29,11 @@ from groq import Groq
 from deep_translator import GoogleTranslator
 from pydub import AudioSegment
 import azure.cognitiveservices.speech as speechsdk
-import google.generativeai as genai_audio  # V21: For Native Audio Upload (upload_file)
-
-# Load environment variables
-load_dotenv()
-
-# Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "")
-AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "westeurope")
-
 # Configure google.generativeai SDK for Native Audio Upload
-if GEMINI_API_KEY:
-    genai_audio.configure(api_key=GEMINI_API_KEY)
+# if GEMINI_API_KEY:
+#     genai_audio.configure(api_key=GEMINI_API_KEY)
 
-app = FastAPI(title="Arab Dubbing API", version="19.0.0")
+app = FastAPI(title="Arab Dubbing API", version="21.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -168,30 +155,32 @@ def get_video_duration(video_path: str) -> float:
 # 1. TRANSCRIPTION + EMOTION ANALYSIS (Gemini Native Audio - V21 FINAL)
 def smart_transcribe(audio_path: str):
     """
-    V21 FINAL FIX: Uses Gemini to transcribe & translate to Professional Fusha.
+    V21 FINAL FIX: Uses Gemini (New SDK) to transcribe & translate to Professional Fusha.
     Strictly enforces Standard Arabic (No Slang).
     """
     print("🧠 Gemini Native: Uploading audio for Professional Fusha Analysis...")
     
     try:
-        # 1. Upload File (Using stable google.generativeai SDK)
-        audio_file = genai_audio.upload_file(path=audio_path)
+        if not gemini_client:
+            raise ValueError("Gemini Client not initialized.")
+
+        # 1. Upload File (Using google-genai SDK)
+        # Note: The new SDK manages uploads via client.files
+        file_upload = gemini_client.files.upload(path=audio_path)
+        print(f"📤 Uploaded file: {file_upload.name}")
         
         # Wait for processing
-        while audio_file.state.name == "PROCESSING":
+        while file_upload.state.name == "PROCESSING":
             time.sleep(1)
-            audio_file = genai_audio.get_file(audio_file.name)
+            file_upload = gemini_client.files.get(name=file_upload.name)
             print("⏳ Processing audio...")
 
-        if audio_file.state.name == "FAILED":
+        if file_upload.state.name == "FAILED":
             raise ValueError("Gemini failed to process audio file.")
         
         print("✅ Audio uploaded successfully!")
 
         # 2. The Prompt (Strictly Fusha / Documentary Style)
-        # Note: Using gemini-1.5-pro as gemini-1.5-flash may not be available in v1beta
-        model = genai_audio.GenerativeModel('gemini-1.5-pro')
-        
         prompt = """
         You are an expert Documentary Dubbing Director.
         Listen to this audio file carefully.
@@ -215,21 +204,26 @@ def smart_transcribe(audio_path: str):
         - Return ONLY the JSON.
         """
 
-        response = model.generate_content(
-            [prompt, audio_file],
-            generation_config={"response_mime_type": "application/json"}
+        # Generate Content using the new SDK syntax
+        response = gemini_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[prompt, file_upload],
+            config={"response_mime_type": "application/json"}
         )
         
         # Cleanup uploaded file
         try:
-            genai_audio.delete_file(audio_file.name)
+            gemini_client.files.delete(name=file_upload.name)
         except: pass
         
         # Parse response
-        segments = json.loads(response.text)
-        print(f"✅ Gemini Analyzed {len(segments)} segments (Professional Fusha + Emotion)!")
-        
-        return segments
+        if response.text:
+            segments = json.loads(response.text)
+            print(f"✅ Gemini Analyzed {len(segments)} segments (Professional Fusha + Emotion)!")
+            return segments
+        else:
+             print("⚠️ Gemini response empty.")
+             return []
 
     except Exception as e:
         print(f"⚠️ Gemini Native Audio Failed: {e}")
