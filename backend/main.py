@@ -189,7 +189,8 @@ def smart_transcribe(audio_path: str):
         print("✅ Audio uploaded successfully!")
 
         # 2. The Prompt (Strictly Fusha / Documentary Style)
-        model = genai_audio.GenerativeModel('gemini-1.5-flash')
+        # Note: Using gemini-1.5-pro as gemini-1.5-flash may not be available in v1beta
+        model = genai_audio.GenerativeModel('gemini-1.5-pro')
         
         prompt = """
         You are an expert Documentary Dubbing Director.
