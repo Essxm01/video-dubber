@@ -174,7 +174,7 @@ def smart_transcribe(audio_path: str):
 
         # 1. Upload File (Using google-genai SDK)
         # Note: The new SDK manages uploads via client.files
-        file_upload = gemini_client.files.upload(path=audio_path)
+        file_upload = gemini_client.files.upload(file=audio_path)
         print(f"📤 Uploaded file: {file_upload.name}")
         
         # Wait for processing
