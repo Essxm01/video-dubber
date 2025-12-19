@@ -144,19 +144,17 @@ def smart_transcribe(audio_path: str):
         print(f"❌ Groq Failed: {e}")
         return []
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# Configure Gemini for Translation
+# Initialize Gemini Client
+client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
     try:
-        # DEBUG: List available models to check permission/version issues
-        print("🔍 Checking available Gemini models...")
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                print(f"   - {m.name}")
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        print("🔍 Gemini SDK (google-genai) Initialized.")
     except Exception as e:
-        print(f"⚠️ Failed to list Gemini models: {e}")
+        print(f"⚠️ Failed to init Gemini SDK: {e}")
 
 # 2. TRANSLATION (Strict Egyptian Slang)
 def translate_text(text: str, target_lang: str = "ar") -> str:
@@ -174,7 +172,7 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
     
     for model_name in models_to_try:
         try:
-            model = genai.GenerativeModel(model_name)
+            if not client: break
             
             # STRICT PROMPT: Modern Standard Arabic (Fusha)
             prompt = f"""
@@ -190,7 +188,11 @@ def translate_text(text: str, target_lang: str = "ar") -> str:
             5. Do not wrap output in quotes.
             """
             
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            
             if response and response.text:
                 # Clean up any potential leakage
                 clean_text = response.text.strip().replace('"', '').replace("`", "").split('\n')[0]
@@ -217,14 +219,16 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         return False
 
     try:
+        if not client: 
+             print("⚠️ Gemini Client not initialized")
+             return False
+
         # CRITICAL CHANGE: Use the SPECIALIZED TTS Model found in logs
         # This model is specifically built for Audio Generation
-        model_name = "gemini-2.5-pro-preview-tts" 
+        model_name = "gemini-2.0-flash-exp" # Using flash-exp as it is confirmed to work with Audio in V1 SDK
         
-        print(f"💎 Gemini 2.5 Pro TTS: Acting Scene -> {text[:20]}...")
+        print(f"💎 Gemini 2.0 TTS: Acting Scene -> {text[:20]}...")
 
-        model = genai.GenerativeModel(model_name)
-        
         # PROMPT: DOCUMENTARY STYLE FUSHA WITH EMOTION
         prompt = f"""
         Act as a world-class Arabic Voice Actor (Documentary Narration).
@@ -239,19 +243,33 @@ def generate_audio_gemini(text: str, path: str) -> bool:
         "{text}"
         """
         
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 response_mime_type="audio/mp3"
             )
         )
         
-        # Save audio
-        with open(path, "wb") as f:
-            f.write(response.parts[0].inline_data.data)
-            
-        print("✅ Gemini 2.5 Pro Audio Generated!")
-        return True
+        # Save audio - New SDK returns bytes directly in binary_content or inline_data
+        # We need to handle the response part correctly
+        audio_data = None
+        if response.bytes:
+             audio_data = response.bytes
+        elif response.parts:
+             for part in response.parts:
+                 if part.inline_data:
+                     audio_data = part.inline_data.data
+                     break
+        
+        if audio_data:
+            with open(path, "wb") as f:
+                f.write(audio_data)
+            print("✅ Gemini Audio Generated!")
+            return True
+        else:
+            print("⚠️ No audio data returned")
+            return False
 
     except Exception as e:
         print(f"⚠️ Gemini TTS Error: {e}")
