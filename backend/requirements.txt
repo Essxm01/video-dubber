@@ -16,3 +16,4 @@ google-generativeai>=0.8.0
 pydub
 supabase
 edge-tts
+google-cloud-storage

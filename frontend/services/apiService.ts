@@ -18,6 +18,19 @@ export interface TaskResponse {
   };
 }
 
+export interface VideoSegment {
+  job_id: string;
+  segment_index: number;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  media_url?: string;
+  gcs_path?: string;
+}
+
+export interface JobDetails {
+  job_id: string;
+  segments: VideoSegment[];
+}
+
 // --- Helper: Map backend status to ProcessingStage ---
 function mapStatusToStage(status: string): ProcessingStage {
   const map: Record<string, ProcessingStage> = {
@@ -163,4 +176,18 @@ export const startRealProcessing = (
 
 // Export for backward compatibility
 export type { ServiceMode } from '../types';
+
+/**
+ * Fetch job details and segments
+ */
+export const getJobDetails = async (jobId: string): Promise<JobDetails | null> => {
+  try {
+    const response = await axios.get<JobDetails>(`${API_BASE_URL}/job/${jobId}`);
+    return response.data;
+  } catch (error) {
+    console.error("Fetch Job Details Error:", error);
+    return null;
+  }
+};
+
 
