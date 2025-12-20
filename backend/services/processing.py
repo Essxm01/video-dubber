@@ -28,7 +28,8 @@ except Exception as e:
 
 # --- HELPERS ---
 def discover_best_gemini_model(client):
-    return 'gemini-1.5-flash' # Simplified for speed/stability
+    # Fallback to a known stable model if dynamic discovery fails
+    return 'gemini-1.5-flash' 
 
 # --- STT & ENRICHMENT ---
 def smart_transcribe(audio_path: str):
@@ -65,8 +66,10 @@ def smart_transcribe(audio_path: str):
             Input: {json.dumps(simplified)}
             Output JSON: [{{ "id": 0, "ar_text": "...", "emotion": "happy", "gender": "Male", "speaker": "Speaker A" }}]
             """
+            
+            # Using specific latest model version to avoid 404
             response = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash-exp', 
                 contents=[prompt, gl_file],
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
@@ -109,7 +112,7 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
     if gemini_client:
         try:
             resp = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash-exp',
                 contents=f"Convert to SSML for Azure TTS (ar-EG-ShakirNeural). Emotion: {emotion}. Text: {text}. Output only SSML."
             )
             val = resp.text.replace("```xml", "").replace("```", "").strip()
@@ -144,17 +147,19 @@ def merge_audio_video(video_path, audio_files, output_path):
         for a in audio_files: 
             if os.path.exists(a): f.write(f"file '{os.path.abspath(a)}'\n")
     
-    # 2. Concat audio
-    merged_audio = f"{output_path}.temp.mp3"
+    # 2. Concat audio (Output to WAV first to allow stream copying from WAV inputs)
+    merged_audio = f"{output_path}.temp.wav" 
+    # Inputs are .wav (pcm_s16le), output is .wav, so -c copy works.
     subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", merged_audio], check=True, stdout=subprocess.DEVNULL)
     
-    # 3. Merge with video (replace audio)
-    # -c:v copy is crucial for speed/quality preservation in this step
+    # 3. Merge with video
+    # Encode audio to aac for mp4 compatibility
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
         "-i", merged_audio,
         "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "128k", # Encode WAV -> AAC
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-shortest",
