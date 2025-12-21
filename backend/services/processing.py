@@ -203,16 +203,14 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         # Voice Selection
         voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
         
-        generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
+        success = generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
         
-        # Pad silence to match start time?
-        # A proper implementation requires building a silence + audio timeline.
-        # For simplicity in this overhaul (focused on architecture), we will use the 'concat' approach 
-        # which appends them one after another. 
-        # ideally we should respect 'start' times.
-        # BUT 'optimize_segments_for_flow' tries to fill gaps.
-        
-        dubbed_files.append(tts_path)
+        # Verify file was actually created and has content
+        if success and os.path.exists(tts_path) and os.path.getsize(tts_path) > 0:
+            dubbed_files.append(tts_path)
+        else:
+            print(f"⚠️ TTS Generation Failed for segment {idx}: {seg['text'][:20]}...")
+            # Ideally generate silence here to maintain sync, but for now skip to avoid crash
     
     if dubbed_files:
         print(f"🎬 Merging {len(dubbed_files)} audio clips...")
