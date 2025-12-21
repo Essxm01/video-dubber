@@ -303,7 +303,7 @@ function App() {
         }
       }, 1500);
 
-      setStopProcessing(() => () => clearInterval(pollInterval));
+      setStopProcessing(() => () => clearInterval(poll));
 
     } catch (err: any) {
       setErrorMsg(err.message || 'حدث خطأ غير متوقع');
