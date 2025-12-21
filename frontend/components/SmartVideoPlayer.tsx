@@ -11,6 +11,7 @@ interface SmartVideoPlayerProps {
     onAllFinished?: () => void;
 }
 
+
 export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poster, onAllFinished }) => {
     // --- State ---
     const [segments, setSegments] = useState<VideoSegment[]>([]);
@@ -207,11 +208,29 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                             </h4>
                                             {/* FIX 1: Removed hardcoded duration. Ideally passed from BE, but cleaner to just show status or leave blank until played */}
                                             {active && duration > 0 && <span className="text-xs text-indigo-600 font-mono">{formatTime(duration)}</span>}
+                                            {/* Status Icon */}
+                                            <div className="mt-1 flex items-center gap-2">
+                                                {/* Download Button (V2) */}
+                                                {ready && seg.media_url && (
+                                                    <a
+                                                        href={seg.media_url}
+                                                        download
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="p-1 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors"
+                                                        title="تحميل المقطع"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        <Upload className="w-4 h-4 rotate-180" />
+                                                    </a>
+                                                )}
+                                                {ready && <CheckCircle className="w-5 h-5 text-green-500" />}
+                                                {processing && <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />}
+                                                {failed && <RefreshCw className="w-5 h-5 text-red-500" />}
+                                                {!ready && !processing && !failed && <Lock className="w-4 h-4 text-gray-300" />}
+                                            </div>
                                         </div>
                                     </div>
-                                    {ready && <CheckCircle className="w-5 h-5 text-green-500" />}
-                                    {processing && <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />}
-                                </div>
                             </button>
                         );
                     })}

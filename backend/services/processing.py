@@ -62,10 +62,16 @@ def smart_transcribe(audio_path: str):
             
             simplified = [{"id": i, "start": s["start"], "end": s["end"], "text": s["text"]} for i, s in enumerate(segments)]
             prompt = f"""
-            Task: Listen, Diarize, Translate to Fusha, Detect Emotion.
+            Task: Listen carefully to the audio. Diarize speakers (Speaker A, Speaker B).
+            CRITICAL: Identify gender based on PITCH and TONE. 
+            Translate text to Professional Arabic (Fusha).
+            Detect Emotion (happy, sad, neutral, excited).
+            
             Input: {json.dumps(simplified)}
-            Output JSON: [{{ "id": 0, "ar_text": "...", "emotion": "happy", "gender": "Male", "speaker": "Speaker A" }}]
+            
+            Output JSON: [{{ "id": 0, "ar_text": "...", "emotion": "neutral", "gender": "Male", "speaker": "Speaker A" }}]
             """
+
             
             # Using specific latest model version to avoid 404
             response = gemini_client.models.generate_content(
@@ -148,8 +154,10 @@ def generate_silence(duration_ms: int, output_path: str):
 
 
 def extract_audio(video_path: str, audio_path: str) -> bool:
-    cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
+    # Fix 2: Force 44100Hz to prevent sample rate mismatch distortion
+    cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "128k", "-ar", "44100", "-ac", "1", "-y", audio_path]
     return subprocess.run(cmd, capture_output=True).returncode == 0
+
 
 def merge_audio_video(video_path, audio_files, output_path):
     # 1. Create concat list
@@ -184,14 +192,19 @@ def merge_audio_video(video_path, audio_files, output_path):
         os.remove(merged_audio)
     except: pass
 
+def adjust_speed(input_path: str, output_path: str, speed: float):
+    """Changes audio speed using atempo filter."""
+    try:
+        # ffmpeg atempo filter: 0.5 to 2.0 (we limit to 1.25)
+        subprocess.run(["ffmpeg", "-i", input_path, "-filter:a", f"atempo={speed}", "-vn", "-y", output_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except:
+        return False
+
 # --- MAIN PIPELINE FUNCTION ---
 def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     """
-    Full dubbing pipeline for a single 5-min chunk.
-    1. Extract Audio
-    2. Smart Transcribe (Groq + Gemini)
-    3. Generate Dubbed Audio (Azure)
-    4. Merge
+    V2 Pipeline with Elastic Syncing.
     """
     base_name = os.path.splitext(video_chunk_path)[0]
     audio_path = f"{base_name}_source.mp3"
@@ -203,45 +216,97 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     segments = smart_transcribe(audio_path)
     
     dubbed_files = []
-    # Process each sentence
+    
+    # ELASTIC SYNCING STATE
+    current_timeline_ms = 0
+    
     for idx, seg in enumerate(segments):
-        tts_path = f"{base_name}_tts_{idx}.wav"
+        tts_temp = f"{base_name}_tts_temp_{idx}.wav"
+        tts_final = f"{base_name}_tts_final_{idx}.wav"
         
-        # Calculate duration match (simple vs complex)
-        # We'll just generate the TTS and trust the timeline for now. 
-        # Advanced sync (stretching) would be added here if needed.
-        
-        # Voice Selection
+        # 1. Generate Raw TTS
         voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
+        print(f"  🗣️ Gen TTS ({voice}): {seg['text'][:30]}...")
+        success = generate_audio_gemini(seg["text"], tts_temp, seg.get("emotion", "neutral"), voice)
         
-        success = generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
+        if not success or not os.path.exists(tts_temp):
+            print(f"  ❌ TTS Failed. Using original audio fallback.")
+            # Fallback: Extract original audio for this segment duration
+            seg_dur = seg["end"] - seg["start"]
+            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(seg_dur), "-y", tts_final]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL)
+            dubbed_files.append(tts_final)
+            current_timeline_ms = seg["end"] * 1000 # Advance Timeline
+            continue
+
+        # 2. Calculate Sync Metadata
+        # Target Start Time (ms)
+        target_start_ms = seg["start"] * 1000
         
-        success = generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
+        # Current Gap (Silence needed?)
+        gap_ms = target_start_ms - current_timeline_ms
         
-        # Verify file was actually created and has content
-        if success and os.path.exists(tts_path) and os.path.getsize(tts_path) > 0:
-            dubbed_files.append(tts_path)
+        if gap_ms > 100: # If gap > 0.1s, insert silence
+             silence_path = f"{base_name}_silence_{idx}.wav"
+             if generate_silence(gap_ms, silence_path):
+                 dubbed_files.append(silence_path)
+                 current_timeline_ms += gap_ms
+                 
+        # 3. Speed/Stretch Check
+        # Original Duration (ms)
+        original_dur_ms = (seg["end"] - seg["start"]) * 1000
+        # TTS Duration (ms)
+        tts_audio = AudioSegment.from_file(tts_temp)
+        tts_dur_ms = len(tts_audio)
+        
+        ratio = tts_dur_ms / original_dur_ms if original_dur_ms > 0 else 1.0
+        
+        if ratio <= 1.0:
+            # TTS is shorter/equal. Good.
+            # We just use it (and maybe pad end or let next gap handle it).
+            # Rename temp to final
+            os.rename(tts_temp, tts_final)
+            dubbed_files.append(tts_final)
+            current_timeline_ms += tts_dur_ms
+            
+        elif ratio <= 1.25:
+             # TTS is slightly longer. Speed up.
+             print(f"  ⚡ Speeding up by {ratio:.2f}x")
+             if adjust_speed(tts_temp, tts_final, ratio):
+                 dubbed_files.append(tts_final)
+                 # New duration is roughly original duration
+                 current_timeline_ms += original_dur_ms 
+             else:
+                 # Speedup failed? Use original
+                 dubbed_files.append(tts_temp)
+                 current_timeline_ms += tts_dur_ms
+                 
         else:
-            print(f"⚠️ TTS Generation Failed for segment {idx}: {seg['text'][:20]}...")
-            # CRITICAL FIX: Generate silence to maintain sync
-            # Calculate duration: (end - start) * 1000 for ms
-            duration_ms = int((seg["end"] - seg["start"]) * 1000)
-            print(f"🔇 Generating {duration_ms}ms silence fallback...")
-            if generate_silence(duration_ms, tts_path):
-                 dubbed_files.append(tts_path)
-            else:
-                 print("❌ Failed to generate silence fallback! Sync risk.")
+             # Ratio > 1.25. Too long!
+             # Cap speed at 1.25x
+             print(f"  ⚠️ Text too long ({ratio:.2f}x). Capping at 1.25x.")
+             if adjust_speed(tts_temp, tts_final, 1.25):
+                 dubbed_files.append(tts_final)
+                 # We consume 1.25x less time than TTS, but still more than original.
+                 # This pushes the timeline.
+                 current_timeline_ms += (tts_dur_ms / 1.25)
+             else:
+                 dubbed_files.append(tts_temp)
+                 current_timeline_ms += tts_dur_ms
+
+        # Cleanup temp
+        if os.path.exists(tts_temp): os.remove(tts_temp)
 
     
     if dubbed_files:
         print(f"🎬 Merging {len(dubbed_files)} audio clips...")
         merge_audio_video(video_chunk_path, dubbed_files, output_chunk_path)
     else:
-        # Fallback: Just copy original if no speech
+        # Fallback
         print("⚠️ No speech detected, copying original.")
         subprocess.run(["ffmpeg", "-i", video_chunk_path, "-c", "copy", output_chunk_path], check=True)
     
-    # Cleanup intermediate TTS files
+    # Cleanup intermediate
     for f in dubbed_files:
         try: os.remove(f)
         except: pass

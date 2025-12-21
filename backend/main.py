@@ -69,12 +69,21 @@ async def upload_video(
         f.write(content)
     
     # 2. Create Job & Split
-    job_id, segments = job_manager.create_job(temp_path, file.filename, mode, target_lang)
+    job_id, segments, thumb_path = job_manager.create_job(temp_path, file.filename, mode, target_lang)
     
+    # 2.5 Upload Thumbnail to GCS
+    thumb_url = None
+    if thumb_path and os.path.exists(thumb_path):
+        thumb_name = f"jobs/{job_id}/thumbnail.jpg"
+        thumb_url = gcs_service.upload_file(thumb_path, thumb_name, content_type="image/jpeg")
+        # Cleanup thumb
+        try: os.remove(thumb_path)
+        except: pass
+
     # 3. Queue Background Processing
     background_tasks.add_task(process_job_sequentially, job_id, segments, temp_path)
     
-    return {"status": "ok", "job_id": job_id, "task_id": job_id, "segments_count": len(segments)}
+    return {"status": "ok", "job_id": job_id, "task_id": job_id, "segments_count": len(segments), "thumbnail_url": thumb_url}
 
 # LEGACY: Keep old endpoint for backward compatibility
 @app.post("/process-video")

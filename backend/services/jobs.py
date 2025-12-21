@@ -41,6 +41,19 @@ class JobManager:
         print(f"✂️ Splitting video for job {job_id}...")
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
+        # 2.5 Generate Thumbnail
+        thumbnail_path = os.path.join(self.upload_dir, f"{job_id}_thumb.jpg")
+        thumb_cmd = ["ffmpeg", "-i", file_path, "-ss", "00:00:01", "-vframes", "1", "-y", thumbnail_path]
+        subprocess.run(thumb_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # We need to upload this to GCS to get a URL, or serve it statically.
+        # For MVP V2, assuming GCS service is available here or we just store path.
+        # Ideally, we call gcs_service.upload_file... let's check imports.
+        # Import inside method to avoid circular dep if needed, or assume main handles it.
+        # Check: Main.py handles upload? No, create_job is called in main. 
+        # Hack: We will return thumbnail_path and let Main upload it.
+
+        
         # 3. Discover segments
         # Pattern matching to find created files
         # Note: glob pattern needs wildcard
@@ -52,7 +65,10 @@ class JobManager:
             db_service.create_segment(job_id, idx, status="pending")
             print(f"  -> Segment {idx} registered: {os.path.basename(seg_path)}")
             
-        return job_id, segments
+            print(f"  -> Segment {idx} registered: {os.path.basename(seg_path)}")
+            
+        return job_id, segments, thumbnail_path if os.path.exists(thumbnail_path) else None
+
 
     def cleanup_source(self, file_path: str):
         """Deletes the original source file."""

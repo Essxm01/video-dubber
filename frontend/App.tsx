@@ -252,8 +252,21 @@ function App() {
 
       showSuccess(lang === 'ar' ? 'تم رفع الفيديو! جاري المعالجة...' : 'Upload complete! Processing...');
 
-      // Start polling for status
-      const pollInterval = setInterval(async () => {
+
+      // Update Metadata with Thumbnail if available
+      if (data.thumbnail_url) {
+        setMetadata(prev => prev ? { ...prev, thumbnail: data.thumbnail_url } : {
+          url: data.job_id,
+          title: file.name,
+          // duration: '...', // duration is not available here
+          thumbnail: data.thumbnail_url,
+          mode: modeToUse
+        });
+      }
+
+      // Start Polling
+      const poll = setInterval(async () => {
+
         try {
           const { status, completed, failed, result } = await getTaskStatus(taskId);
           setTaskStatus(status);
