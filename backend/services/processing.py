@@ -136,6 +136,17 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
         print(f"TTS Error: {e}")
         return False
 
+def generate_silence(duration_ms: int, output_path: str):
+    """Generates a silent audio file of specific duration."""
+    try:
+        silence = AudioSegment.silent(duration=duration_ms)
+        silence.export(output_path, format="wav")
+        return True
+    except Exception as e:
+        print(f"⚠️ Silence Gen Error: {e}")
+        return False
+
+
 def extract_audio(video_path: str, audio_path: str) -> bool:
     cmd = ["ffmpeg", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-y", audio_path]
     return subprocess.run(cmd, capture_output=True).returncode == 0
@@ -205,12 +216,22 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         
         success = generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
         
+        success = generate_audio_gemini(seg["text"], tts_path, seg.get("emotion", "neutral"), voice)
+        
         # Verify file was actually created and has content
         if success and os.path.exists(tts_path) and os.path.getsize(tts_path) > 0:
             dubbed_files.append(tts_path)
         else:
             print(f"⚠️ TTS Generation Failed for segment {idx}: {seg['text'][:20]}...")
-            # Ideally generate silence here to maintain sync, but for now skip to avoid crash
+            # CRITICAL FIX: Generate silence to maintain sync
+            # Calculate duration: (end - start) * 1000 for ms
+            duration_ms = int((seg["end"] - seg["start"]) * 1000)
+            print(f"🔇 Generating {duration_ms}ms silence fallback...")
+            if generate_silence(duration_ms, tts_path):
+                 dubbed_files.append(tts_path)
+            else:
+                 print("❌ Failed to generate silence fallback! Sync risk.")
+
     
     if dubbed_files:
         print(f"🎬 Merging {len(dubbed_files)} audio clips...")

@@ -271,7 +271,14 @@ function App() {
             setState(ProcessingState.COMPLETED);
             showSuccess(lang === 'ar' ? 'تمت الدبلجة بنجاح! 🎉' : 'Dubbing completed! 🎉');
             setUploadedFile(null);
+
+            // UX Fix: Notify if split
+            if (result && result.segments_count && result.segments_count > 1) {
+              showInfo(lang === 'ar' ? `ملاحظة: تم تقسيم الفيديو إلى ${result.segments_count} أجزاء لضمان الجودة` : `Note: Video split into ${result.segments_count} parts for quality.`);
+            }
+
           } else if (failed) {
+
             clearInterval(pollInterval);
             setErrorMsg(status.message || 'فشلت المعالجة');
             setState(ProcessingState.FAILED);
@@ -472,8 +479,24 @@ function App() {
             {/* State 3: COMPLETED */}
             {state === ProcessingState.COMPLETED && (
               <div className="py-12 w-full">
-                {/* Force remount when URL changes by using key prop */}
-                <ResultPlayer key={metadata?.url} metadata={metadata} onReset={handleReset} t={t} />
+                {/* BLACK SCREEN FIX: Use the SAME player that works during processing */}
+                {/* We pass the jobId so it can fetch the segments correctly */}
+                <div className="text-center mb-8">
+                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{t.successTitle}</h2>
+                  <p className="text-slate-600 dark:text-slate-400">{t.successDesc}</p>
+                </div>
+
+                <SmartVideoPlayer
+                  jobId={taskStatus.taskId || metadata?.url?.split('jobs/')[1]?.split('/')[0] || ''}
+                  poster={metadata?.thumbnail || MOCK_YOUTUBE_THUMBNAIL}
+                  onAllFinished={() => { }}
+                />
+
+                <div className="text-center mt-8">
+                  <Button onClick={handleReset} variant="secondary">
+                    {t.dubAnother}
+                  </Button>
+                </div>
               </div>
             )}
 

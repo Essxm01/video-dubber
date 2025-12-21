@@ -41,9 +41,17 @@ def health():
         }
     }
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Force CORS config on startup to prevent permission resets."""
+    print("🔄 Ensuring GCS CORS Policy is Public...")
+    gcs_service.configure_cors()
+
 @app.get("/")
 def root():
     return {"message": "Arab Dubbing API V22 - Ready"}
+
 
 # NEW: Upload endpoint for chunked processing
 @app.post("/upload")
