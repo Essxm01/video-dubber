@@ -227,6 +227,7 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         tts_final = f"{base_name}_tts_final_{idx}.wav"
         
         # 1. Generate Raw TTS
+        voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
         print(f"  🗣️ Gen TTS ({voice}): {seg['text'][:30]}...")
         
         # Fix 2: Rate Limit Prevention (Sleep 4s for Free Tier)
