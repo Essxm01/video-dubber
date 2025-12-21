@@ -75,6 +75,7 @@ class GCSStorage:
                 method="GET"
             )
             return url
+        except Exception as e:
             print(f"⚠️ URL Sign Error: {e}")
             return ""
 
