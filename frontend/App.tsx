@@ -243,14 +243,15 @@ function App() {
     try {
       // 2. Upload
       const uploadResult = await uploadVideo(file, modeToUse, lang);
-      const taskId = uploadResult.task_id;
 
-      if (!uploadResult.success || !taskId) {
-        setErrorMsg(uploadResult.error || 'فشل رفع الملف');
-        setState(ProcessingState.FAILED);
-        showError(uploadResult.error || 'فشل رفع الملف');
-        return;
+      console.log("Upload Response:", uploadResult); // Debugging
+
+      if (!uploadResult.success || !uploadResult.taskId) {
+        throw new Error(uploadResult.error || "Invalid Server Response: No Job ID");
       }
+
+      const taskId = uploadResult.task_id; // Keeping original variable name for consistency below
+
 
       showSuccess(lang === 'ar' ? 'تم رفع الفيديو! جاري المعالجة...' : 'Upload complete! Processing...');
 
