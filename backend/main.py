@@ -4,7 +4,7 @@ Split-Process-Stream Pipeline with GCS Storage
 """
 import os
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -82,12 +82,12 @@ async def process_video_legacy(
 # PROXY STREAM ENDPOINT
 @app.get("/stream/{job_id}/{filename}")
 async def stream_video(job_id: str, filename: str):
-    """Streams video directly from GCS via Backend Proxy (Bypasses CORS)."""
+    """Redirects to GCS Signed URL to allow direct playback with Range support."""
     blob_name = f"jobs/{job_id}/{filename}"
-    return StreamingResponse(
-        gcs_service.stream_file_content(blob_name), 
-        media_type="video/mp4"
-    )
+    signed_url = gcs_service.generate_signed_url(blob_name)
+    if not signed_url:
+        return {"error": "File not found or GCS error"}, 404
+    return RedirectResponse(url=signed_url)
 
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str, request: Request):
