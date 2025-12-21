@@ -145,7 +145,9 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
 def generate_silence(duration_ms: int, output_path: str):
     """Generates a silent audio file of specific duration."""
     try:
-        silence = AudioSegment.silent(duration=duration_ms)
+        # Fix 3: DTS/Sample Rate Mismatch. Force 44100Hz, 16-bit, Mono.
+        silence = AudioSegment.silent(duration=duration_ms, frame_rate=44100)
+        silence = silence.set_channels(1).set_sample_width(2)
         silence.export(output_path, format="wav")
         return True
     except Exception as e:
@@ -227,6 +229,10 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         # 1. Generate Raw TTS
         voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
         print(f"  🗣️ Gen TTS ({voice}): {seg['text'][:30]}...")
+        
+        # Fix 2: Rate Limit Prevention (Sleep 2s)
+        time.sleep(2)
+        
         success = generate_audio_gemini(seg["text"], tts_temp, seg.get("emotion", "neutral"), voice)
         
         if not success or not os.path.exists(tts_temp):
