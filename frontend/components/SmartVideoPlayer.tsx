@@ -100,6 +100,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                     onEnded={handleEnded}
                     controls={false} // Custom controls or minimal default
                     playsInline
+                    crossOrigin="anonymous"
                     poster={currentIndex === 0 ? poster : undefined}
                 />
             )}
