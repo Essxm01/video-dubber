@@ -231,6 +231,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                             </div>
                                         </div>
                                     </div>
+                                </div>
                             </button>
                         );
                     })}
