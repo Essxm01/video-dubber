@@ -34,7 +34,12 @@ class GCSStorage:
             bucket.cors = [
                 {
                     "origin": ["*"],
-                    "responseHeader": ["Content-Type", "x-goog-resumable"],
+                    "responseHeader": [
+                        "Content-Type", 
+                        "x-goog-resumable", 
+                        "Access-Control-Allow-Origin", 
+                        "Range"
+                    ],
                     "method": ["GET", "HEAD", "OPTIONS"],
                     "maxAgeSeconds": 3600
                 }
