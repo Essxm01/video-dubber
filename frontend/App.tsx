@@ -293,7 +293,7 @@ function App() {
 
           } else if (failed) {
 
-            clearInterval(pollInterval);
+            clearInterval(poll);
             setErrorMsg(status.message || 'فشلت المعالجة');
             setState(ProcessingState.FAILED);
             showError(status.message || 'فشلت المعالجة');
