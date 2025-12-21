@@ -3,8 +3,9 @@ Arab Dubbing API V22 - Cloud Native Architecture
 Split-Process-Stream Pipeline with GCS Storage
 """
 import os
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request, HTTPException
 from fastapi.responses import StreamingResponse, RedirectResponse
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -109,6 +110,12 @@ async def stream_video(job_id: str, filename: str):
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str, request: Request):
     """Retrieve segments from DB and rewrite URLs to use Proxy Stream."""
+    try:
+        uuid.UUID(job_id)
+    except ValueError:
+        # Prevent DB error if ID is 'undefined' or invalid
+        return {"error": "Invalid Job ID format"}, 400
+
     segments = db_service.get_job_segments(job_id)
     
     # Rewrite media_url to use our Proxy Stream
