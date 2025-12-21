@@ -17,11 +17,30 @@ class GCSStorage:
             # OR if running on Render/Cloud with implicit auth.
             # Ideally the user should provide the JSON key file path in .env
             print("⚠️ GCS: No JSON key found, attempting default credentials...")
-            try:
-                self.client = storage.Client()
             except Exception as e:
                 print(f"❌ GCS Client Init Failed: {e}")
                 self.client = None
+        
+        # Auto-configure CORS for the bucket to allow browser playback
+        if self.client:
+            self.configure_cors()
+
+    def configure_cors(self):
+        """Sets CORS policy on the bucket to allow playback from any origin."""
+        try:
+            bucket = self.client.bucket(self.bucket_name)
+            bucket.cors = [
+                {
+                    "origin": ["*"],
+                    "responseHeader": ["Content-Type", "x-goog-resumable"],
+                    "method": ["GET", "HEAD", "OPTIONS"],
+                    "maxAgeSeconds": 3600
+                }
+            ]
+            bucket.patch()
+            print(f"✅ GCS Bucket CORS Configured for {self.bucket_name}")
+        except Exception as e:
+            print(f"⚠️ GCS CORS Config Failed: {e}")
 
     def upload_file(self, source_path: str, destination_blob_name: str, content_type: str = "video/mp4") -> str:
         """Uploads a file to the bucket and returns the public/signed URL."""
