@@ -5,6 +5,7 @@ import { Header } from './components/Header';
 import { Button } from './components/Button';
 import { StageStepper } from './components/StageStepper';
 import { ResultPlayer } from './components/ResultPlayer';
+import { SmartVideoPlayer } from './components/SmartVideoPlayer'; // NEW
 import { AuthPage } from './components/AuthPage';
 import { HowItWorksPage } from './components/HowItWorksPage';
 import { FeaturesPage } from './components/FeaturesPage';
@@ -443,17 +444,16 @@ function App() {
                 <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-8 border border-slate-200 dark:border-slate-800 shadow-xl">
                   <StageStepper currentStage={taskStatus.stage} mode={mode} t={t} />
 
-                  <div className="mt-8 space-y-2">
-                    <div className="flex justify-between text-sm font-medium text-slate-500 dark:text-slate-400">
-                      <span>{taskStatus.message}</span>
-                      <span>{Math.round(taskStatus.progress)}%</span>
-                    </div>
-                    <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-l from-indigo-500 to-purple-500 transition-all duration-300 ease-out"
-                        style={{ width: `${taskStatus.progress}%` }}
-                      ></div>
-                    </div>
+                  {/* NEW: Smart Playlist Player (Progressive Playback) */}
+                  <div className="mt-8">
+                    <SmartVideoPlayer
+                      jobId={taskStatus.taskId}
+                      poster={metadata?.thumbnail || MOCK_YOUTUBE_THUMBNAIL}
+                      onAllFinished={() => {
+                        // Optional: Auto-transition logic could go here, 
+                        // but App.tsx main polling handles the state transition to COMPLETED
+                      }}
+                    />
                   </div>
                 </div>
 
