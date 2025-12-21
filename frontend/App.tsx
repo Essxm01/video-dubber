@@ -241,25 +241,26 @@ function App() {
     setState(ProcessingState.PROCESSING);
 
     try {
-      const { taskId, success, error } = await uploadVideo(file, modeToUse, 'ar');
+      // 2. Upload
+      const uploadResult = await uploadVideo(file, modeToUse, lang);
+      const taskId = uploadResult.task_id;
 
-      if (!success || !taskId) {
-        setErrorMsg(error || 'فشل رفع الملف');
+      if (!uploadResult.success || !taskId) {
+        setErrorMsg(uploadResult.error || 'فشل رفع الملف');
         setState(ProcessingState.FAILED);
-        showError(error || 'فشل رفع الملف');
+        showError(uploadResult.error || 'فشل رفع الملف');
         return;
       }
 
       showSuccess(lang === 'ar' ? 'تم رفع الفيديو! جاري المعالجة...' : 'Upload complete! Processing...');
 
-
       // Update Metadata with Thumbnail if available
-      if (data.thumbnail_url) {
-        setMetadata(prev => prev ? { ...prev, thumbnail: data.thumbnail_url } : {
-          url: data.job_id,
+      if (uploadResult.thumbnail_url) {
+        setMetadata(prev => prev ? { ...prev, thumbnail: uploadResult.thumbnail_url } : {
+          url: uploadResult.job_id,
           title: file.name,
-          // duration: '...', // duration is not available here
-          thumbnail: data.thumbnail_url,
+          // duration: '...',
+          thumbnail: uploadResult.thumbnail_url,
           mode: modeToUse
         });
       }
@@ -272,7 +273,7 @@ function App() {
           setTaskStatus(status);
 
           if (completed) {
-            clearInterval(pollInterval);
+            clearInterval(poll);
             // UPDATE URL WITH DUBBED VIDEO
             setMetadata(prev => prev ? {
               ...prev,
