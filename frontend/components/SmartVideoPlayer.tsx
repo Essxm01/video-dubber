@@ -31,6 +31,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
 
     // --- Data Fetching ---
     const fetchSegments = async () => {
+        if (!jobId) return; // Guard
         try {
             const data = await getJobDetails(jobId);
             if (data && data.segments) {
@@ -46,6 +47,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
     };
 
     useEffect(() => {
+        if (!jobId) return;
         fetchSegments();
         pollInterval.current = setInterval(fetchSegments, 3000);
         return () => {
