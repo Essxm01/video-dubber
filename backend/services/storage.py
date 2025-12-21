@@ -17,6 +17,8 @@ class GCSStorage:
             # OR if running on Render/Cloud with implicit auth.
             # Ideally the user should provide the JSON key file path in .env
             print("⚠️ GCS: No JSON key found, attempting default credentials...")
+            try:
+                self.client = storage.Client()
             except Exception as e:
                 print(f"❌ GCS Client Init Failed: {e}")
                 self.client = None
