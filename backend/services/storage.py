@@ -75,9 +75,22 @@ class GCSStorage:
                 method="GET"
             )
             return url
-        except Exception as e:
             print(f"⚠️ URL Sign Error: {e}")
             return ""
+
+    def stream_file_content(self, blob_name: str):
+        """Yields file content in chunks for streaming."""
+        if not self.client: return None
+        try:
+            bucket = self.client.bucket(self.bucket_name)
+            blob = bucket.blob(blob_name)
+            # Open directly as a stream
+            with blob.open("rb") as f:
+                while chunk := f.read(1024 * 1024): # 1MB chunks
+                    yield chunk
+        except Exception as e:
+            print(f"❌ GCS Stream Error: {e}")
+            yield b""
 
 # Singleton instance
 gcs_service = GCSStorage()

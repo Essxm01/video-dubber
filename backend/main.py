@@ -3,8 +3,8 @@ Arab Dubbing API V22 - Cloud Native Architecture
 Split-Process-Stream Pipeline with GCS Storage
 """
 import os
-import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -25,6 +25,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ... (Existing health/root endpoints) ...
 
 # Health Check Endpoint (Required for Render)
 @app.get("/health")
@@ -77,10 +79,31 @@ async def process_video_legacy(
     # Redirect to new upload handler
     return await upload_video(background_tasks, file, mode, target_lang)
 
+# PROXY STREAM ENDPOINT
+@app.get("/stream/{job_id}/{filename}")
+async def stream_video(job_id: str, filename: str):
+    """Streams video directly from GCS via Backend Proxy (Bypasses CORS)."""
+    blob_name = f"jobs/{job_id}/{filename}"
+    return StreamingResponse(
+        gcs_service.stream_file_content(blob_name), 
+        media_type="video/mp4"
+    )
+
 @app.get("/job/{job_id}")
-def get_job_status(job_id: str):
-    """Retrieve segments from DB for a specific job."""
+def get_job_status(job_id: str, request: Request):
+    """Retrieve segments from DB and rewrite URLs to use Proxy Stream."""
     segments = db_service.get_job_segments(job_id)
+    
+    # Rewrite media_url to use our Proxy Stream
+    base_url = str(request.base_url).rstrip("/")
+    for seg in segments:
+        if seg.get("status") == "ready" and seg.get("media_url"):
+            # Extract filename from the Signed URL or DB entry?
+            # The 'media_url' in DB is likely the Signed URL or GCS path.
+            # But we know the naming convention: "{job_id}_seg{idx}_dubbed.mp4"
+            filename = f"{job_id}_seg{seg['segment_index']}_dubbed.mp4"
+            seg["media_url"] = f"{base_url}/stream/{job_id}/{filename}"
+            
     return {"job_id": job_id, "segments": segments}
 
 # LEGACY: Keep old status endpoint for backward compatibility
