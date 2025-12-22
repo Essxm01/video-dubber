@@ -174,6 +174,7 @@ def process_job_sequentially(job_id: str, segments: list, source_path: str):
             print(f"⚡ Processing Segment {idx+1}/{len(segments)}: {seg_path}")
             
             # Update Status: Processing
+            print(f"DEBUG: Updating DB for Job ID: {job_id}, Segment: {idx}")
             db_service.update_segment_status(job_id, idx, "processing")
             
             # OUTPUT PATH
