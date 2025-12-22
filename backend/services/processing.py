@@ -75,7 +75,7 @@ def smart_transcribe(audio_path: str):
             """
 
             # Retry Logic for Quota (429) and Model Not Found (404)
-            from google.api_core.exceptions import NotFound
+            # from google.api_core.exceptions import NotFound # Removing specific import if not reliable
 
             response = None
             max_retries = 3
@@ -93,13 +93,17 @@ def smart_transcribe(audio_path: str):
                     wait_time = (attempt + 1) * 10
                     print(f"⚠️ Quota hit (429). Retrying in {wait_time}s...")
                     time.sleep(wait_time)
-                except NotFound:
-                    print(f"⚠️ Model {current_model} NOT FOUND (404). Switching to gemini-pro.")
-                    current_model = 'gemini-pro'
-                    # Retry immediately with new model
-                    continue
                 except Exception as e:
-                    print(f"⚠️ Enrichment Attempt {attempt+1} Error: {e}")
+                    error_str = str(e)
+                    print(f"⚠️ Enrichment Attempt {attempt+1} Error: {error_str}")
+                    
+                    # 🚨 CRITICAL SWITCH: If Flash fails (404), switch to Pro immediately
+                    if "404" in error_str or "NOT_FOUND" in error_str:
+                        print(f"🔄 Model '{current_model}' caused 404. Switching to 'gemini-pro' for next attempt.")
+                        current_model = 'gemini-pro'
+                        time.sleep(1)
+                        continue # Retry immediately
+                    
                     time.sleep(2)
 
             try: gemini_client.files.delete(name=gl_file.name)
