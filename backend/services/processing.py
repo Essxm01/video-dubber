@@ -2,24 +2,22 @@ import os
 import time
 import json
 import subprocess
-import asyncio
 import nest_asyncio
-import edge_tts
 from datetime import datetime
 from pydub import AudioSegment
 from groq import Groq
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import azure.cognitiveservices.speech as speechsdk
 
-# Apply Nest Asyncio to allow nested event loops (crucial for edge-tts in sync wrappers)
-nest_asyncio.apply()
-
-# Load env
+# Load env variables (Render provides these)
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "") or os.getenv("SPEECH_KEY", "")
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "") or os.getenv("SPEECH_REGION", "")
 
 # Init Gemini
 gemini_client = None
@@ -119,7 +117,6 @@ def smart_transcribe(audio_path: str):
                 response_format="verbose_json"
             )
         
-        # Parse segments and include no_speech_prob
         if hasattr(transcription, 'segments'):
             for seg in transcription.segments:
                 segments.append({
@@ -151,7 +148,7 @@ def smart_transcribe(audio_path: str):
             
             Input: {json.dumps(simplified)}
             
-            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker": "Speaker A" }}]
+            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker": "Speaker A", "emotion": "neutral" }}]
             """
 
             response = None
@@ -184,36 +181,61 @@ def smart_transcribe(audio_path: str):
                         data = enrichment_map[i]
                         seg['text'] = data.get('ar_text', seg['text'])
                         seg['speaker'] = data.get('speaker', 'Speaker A')
+                        seg['emotion'] = data.get('emotion', 'neutral')
         except Exception as e:
             print(f"⚠️ Enrichment Failed: {e}")
 
     return segments
 
-# --- EDGE TTS ---
+# --- AZURE TTS ---
 
-async def generate_edge_tts_async(text: str, voice: str, output_path: str) -> bool:
+def generate_audio_azure(text: str, path: str, voice: str, style: str = "neutral") -> bool:
     try:
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(output_path)
-        return True
-    except Exception as e:
-        print(f"TTS Error ({voice}): {e}")
-        return False
+        speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
+        
+        # High Fidelity Output (44.1kHz)
+        # Using Audio44100Hz16BitMonoMp3 for better quality than default 16kHz
+        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio44100Hz16BitMonoMp3)
+        
+        speech_config.speech_synthesis_voice_name = voice
+        audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
+        
+        # Construct SSML for emotion/style if needed
+        # We wrap in basic SSML to be safe
+        ssml = f"""
+        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="ar-EG">
+            <voice name="{voice}">
+                <mstts:express-as style="{style}" styledegree="1">
+                    {text}
+                </mstts:express-as>
+            </voice>
+        </speak>
+        """
+        
+        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+        
+        # Use SSML Async
+        result = synthesizer.speak_ssml_async(ssml).get()
 
-def generate_audio_edge(text: str, path: str, voice: str) -> bool:
-    """Synchronous wrapper for Edge TTS."""
-    try:
-        asyncio.run(generate_edge_tts_async(text, voice, path))
-        return os.path.exists(path) and os.path.getsize(path) > 0
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            return True
+        elif result.reason == speechsdk.ResultReason.Canceled:
+            cancellation_details = result.cancellation_details
+            print(f"Azure TTS Canceled: {cancellation_details.reason}")
+            if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                print(f"Error details: {cancellation_details.error_details}")
+            # Fallback to simple text if SSML fails?
+            return False
+            
     except Exception as e:
-        print(f"Edge TTS Failed: {e}")
+        print(f"Azure TTS Exception: {e}")
         return False
 
 # --- PIPELINE ---
 
 def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     """
-    V5 Pipeline: Edge-TTS, VAD, Smart Sync.
+    V5 Pipeline: Azure TTS (Dual Male), VAD, Smart Sync.
     """
     base_name = os.path.splitext(video_chunk_path)[0]
     audio_path = f"{base_name}_source.mp3"
@@ -237,7 +259,7 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     current_timeline_ms = 0
     
     for idx, seg in enumerate(segments):
-        tts_raw = f"{base_name}_tts_raw_{idx}.mp3" # Edge uses MP3 usually
+        tts_raw = f"{base_name}_tts_temp_{idx}.mp3"
         tts_clean = f"{base_name}_tts_clean_{idx}.wav"
         tts_final = f"{base_name}_tts_final_{idx}.wav"
         
@@ -248,9 +270,8 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         target_dur = seg["end"] - seg["start"]
         
         if no_speech > 0.4 or not text or len(text) < 2:
-            print(f"  ⏭️ Skipping Segment {idx} (No Speech Prob: {no_speech:.2f} or Empty Text)")
-            # Fill with silence or original audio? 
-            # Ideally original audio for background ambiance.
+            print(f"  ⏭️ Skipping Segment {idx} (No Speech Prob: {no_speech:.2f})")
+            # Fill with silence or original noise? Original audio is best for background.
             # Extract original audio for this duration
             cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
             subprocess.run(cmd, stdout=subprocess.DEVNULL)
@@ -261,27 +282,42 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             
         # 2. Voice Mapping (Dual Male)
         speaker = seg.get("speaker", "Speaker A")
+        
         # Heuristic: Speaker B or numbers usually mean second speaker
         if "B" in speaker or "2" in str(speaker):
-            voice = "ar-SA-HamedNeural"
+            voice = "ar-SA-HamedNeural" # Saudi Male
         else:
-            voice = "ar-EG-ShakirNeural"
+            voice = "ar-EG-ShakirNeural" # Egyptian Male
+            
+        style = "cheerful" if "!" in text or seg.get("emotion") == "happy" else "neutral"
 
         # 3. Smart Sync Check (Condense Loop)
         est_chars_per_sec = 13
         est_duration = len(text) / est_chars_per_sec
         
-        # First check estimate vs limit
         if est_duration > (target_dur * 1.3):
              print(f"  📉 Predicted Text Too Long (Est {est_duration:.2f}s vs Max {target_dur*1.3:.2f}s). Condensing...")
              text = condense_text(text, target_dur, est_duration)
         
-        print(f"  🗣️ Gen TTS ({voice}): {text[:30]}...")
+        print(f"  🗣️ Gen Azure TTS ({voice}): {text[:30]}...")
         # Generate
-        success = generate_audio_edge(text, tts_raw, voice)
+        success = generate_audio_azure(text, tts_raw, voice, style)
         
         if not success:
-            # Fallback to original
+            # Maybe retry without SSML (Standard text)
+            print("  ⚠️ SSML Failed? Retrying text-only.")
+            try:
+                speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
+                speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio44100Hz16BitMonoMp3)
+                speech_config.speech_synthesis_voice_name = voice
+                audio_config = speechsdk.audio.AudioOutputConfig(filename=tts_raw)
+                synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+                synthesizer.speak_text_async(text).get()
+                if os.path.exists(tts_raw) and os.path.getsize(tts_raw) > 0:
+                    success = True
+            except: pass
+
+        if not success or not os.path.exists(tts_raw):
              print(f"  ❌ TTS Failed. Using original.")
              cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
              subprocess.run(cmd, stdout=subprocess.DEVNULL)
@@ -298,7 +334,7 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         tts_dur_ms = len(tts_audio)
         target_dur_ms = target_dur * 1000.0
         
-        # Gap handling (Start of segment vs timeline)
+        # Gap handling
         start_gap_ms = (seg["start"] * 1000.0) - current_timeline_ms
         if start_gap_ms > 100:
             sil_path = f"{base_name}_sil_{idx}.wav"
@@ -317,12 +353,11 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             dubbed_files.append(tts_final)
             current_timeline_ms += target_dur_ms
         else:
-            # > 1.25x (even after condense attempts?)
+            # > 1.25x
             # Cap speed at 1.25x and STRETCH VIDEO later
             print(f"  🐢 Ratio {ratio:.2f}x. Capping speed & Will Stretch Video.")
             adjust_speed(tts_clean, tts_final, 1.25)
             dubbed_files.append(tts_final)
-            # New duration
             new_dur = tts_dur_ms / 1.25
             current_timeline_ms += new_dur
             
@@ -346,8 +381,6 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         
         if audio_len_ms > (video_len_ms + 200): # Tolerance
             stretch_ratio = audio_len_ms / video_len_ms
-            # Limit stretch? If > 1.5x, maybe panic? 
-            # User said "Video Stretch (Slow-Mo)". 
             print(f"  🕰️ Extending Video by {stretch_ratio:.2f}x...")
             stretched_video = f"{base_name}_stretched.mp4"
             cmd = [
@@ -373,7 +406,6 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
         
-        # Cleanup
         try:
             os.remove(concat_list)
             os.remove(merged_wav)
