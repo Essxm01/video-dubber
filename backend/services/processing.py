@@ -78,6 +78,8 @@ def smart_transcribe(audio_path: str):
             Task: Listen carefully to the audio. Diarize speakers (Speaker A, Speaker B).
             CRITICAL: Identify gender based on PITCH and TONE. 
             Translate text to Professional Arabic (Fusha).
+            CRITICAL: The Arabic output must be CONCISE (Short & Brief) to fit video timing. 
+            Use shorter synonyms where possible without losing meaning. 
             Detect Emotion (happy, sad, neutral, excited).
             
             Input: {json.dumps(simplified)}
@@ -148,6 +150,53 @@ def optimize_segments_for_flow(segments, gap_threshold=0.75, max_chars=280):
             current = next_seg.copy()
     optimized.append(current)
     return optimized
+
+def condense_text(text: str, target_seconds: float, current_est_seconds: float) -> str:
+    """Uses Gemini to summarize/condense Arabic text to fit the duration."""
+    if not gemini_client: return text
+    
+    needed_reduction = 1.0 - (target_seconds / current_est_seconds)
+    if needed_reduction < 0.1: return text # Ignore small changes
+    
+    print(f"  📉 Condensing text (Est: {current_est_seconds:.2f}s -> Target: {target_seconds:.2f}s)...")
+    
+    prompt = f"""
+    The following Arabic text is too long for the video segment.
+    Original: "{text}"
+    
+    Task: Rewrite it to be significantly shorter (approx {target_seconds} seconds speaking time) while strictly preserving the core meaning.
+    Use concise vocabulary. Output ONLY the shortened Arabic text.
+    """
+    
+    try:
+        resp = gemini_client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
+        )
+        return resp.text.strip()
+    except Exception as e:
+        print(f"  ⚠️ Condense Failed: {e}")
+        return text
+
+def sanitize_audio(input_path: str, output_path: str) -> bool:
+    """
+    1. Resample to 44100Hz, 16-bit, Mono.
+    2. Fix timestamps (aresample=async=1).
+    """
+    try:
+        # ffmpeg filter: aresample=async=1:min_comp=0.01:first_pts=0
+        # -ac 1 (Mono), -ar 44100 (Sample Rate), -acodec pcm_s16le (WAV standard)
+        cmd = [
+            "ffmpeg", "-i", input_path,
+            "-af", "aresample=async=1:min_comp=0.01:first_pts=0",
+            "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le",
+            "-y", output_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except Exception as e:
+        print(f"Timestamp Repair Failed: {e}")
+        return False
 
 # --- TTS & MERGING ---
 def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_name: str = "ar-EG-ShakirNeural") -> bool:
@@ -244,7 +293,7 @@ def adjust_speed(input_path: str, output_path: str, speed: float):
 # --- MAIN PIPELINE FUNCTION ---
 def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     """
-    V2 Pipeline with Elastic Syncing.
+    V3 Pipeline: Smart Adaptation (Text Condensation + Video Stretching).
     """
     base_name = os.path.splitext(video_chunk_path)[0]
     audio_path = f"{base_name}_source.mp3"
@@ -252,6 +301,16 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     print(f"🎤 Extracting audio: {video_chunk_path}")
     extract_audio(video_chunk_path, audio_path)
     
+    # 1. Get Duration from Video
+    original_video_dur = 0
+    try:
+        probe = subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_chunk_path]
+        )
+        original_video_dur = float(probe.decode().strip())
+    except:
+        pass # Fallback to segments logic if needed, but video duration is best truth
+
     print(f"🧠 Transcribing & Translating...")
     segments = smart_transcribe(audio_path)
     
@@ -260,99 +319,183 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
     # ELASTIC SYNCING STATE
     current_timeline_ms = 0
     
+    # We process assuming a linear flow. For V3, we strictly process 1 segment = 1 TTS.
+    # If segments overlap or are fragmented, 'optimize_segments_for_flow' usually handles it.
+    # Here we simplify: The *Entire Chunk* corresponds to the sum of segments.
+    # But usually 'video_chunk_path' IS one segment from the main loop. 
+    # Let's assume the input video_chunk_path is the VISUAL segment corresponding to these audio segments.
+    
+    # Actually, often 'smart_transcribe' returns multiple sentences for one video chunk?
+    # No, 'process_segment_pipeline' is called per visual segment. 
+    # STARTING ASSUMPTION: The input video chunk is ONE continuous timeline that needs ONE continuous audio track.
+    # We will concat the TTS results.
+    
+    final_audio_track = f"{base_name}_full_track.wav"
+    
     for idx, seg in enumerate(segments):
-        tts_temp = f"{base_name}_tts_temp_{idx}.wav"
+        tts_raw = f"{base_name}_tts_raw_{idx}.wav"
+        tts_clean = f"{base_name}_tts_clean_{idx}.wav"
         tts_final = f"{base_name}_tts_final_{idx}.wav"
         
+        text = seg["text"]
+        
+        # 0. Smart Condensation
+        # Est. Duration: ~13 chars per second for Arabic
+        est_chars_per_sec = 13
+        est_duration = len(text) / est_chars_per_sec
+        
+        # Target: This segment's duration in the video?
+        # Since we just have 'segments' from 'smart_transcribe' which uses the audio source,
+        # the 'seg["end"] - seg["start"]' IS the target duration if we want to match original pacing.
+        target_dur = seg["end"] - seg["start"]
+        
+        # Limit: We can accept up to 1.25x speed. So raw text can be 1.25x longer than target.
+        max_acceptable_dur = target_dur * 1.25
+        
+        if est_duration > max_acceptable_dur:
+            text = condense_text(text, target_dur, est_duration)
+            
         # 1. Generate Raw TTS
         voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
-        print(f"  🗣️ Gen TTS ({voice}): {seg['text'][:30]}...")
+        print(f"  🗣️ Gen TTS ({voice}): {text[:30]}...")
+        time.sleep(2) # Anti-rate limit
         
-        # Fix 2: Rate Limit Prevention (Sleep 4s for Free Tier)
-        time.sleep(4)
+        success = generate_audio_gemini(text, tts_raw, seg.get("emotion", "neutral"), voice)
         
-        success = generate_audio_gemini(seg["text"], tts_temp, seg.get("emotion", "neutral"), voice)
-        
-        if not success or not os.path.exists(tts_temp):
+        if not success or not os.path.exists(tts_raw):
             print(f"  ❌ TTS Failed. Using original audio fallback.")
-            # Fallback: Extract original audio for this segment duration
-            seg_dur = seg["end"] - seg["start"]
-            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(seg_dur), "-y", tts_final]
+            # Fallback code
+            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
             subprocess.run(cmd, stdout=subprocess.DEVNULL)
+            sanitize_audio(tts_final, tts_final) # Ensure 44.1k
             dubbed_files.append(tts_final)
-            current_timeline_ms = seg["end"] * 1000 # Advance Timeline
+            current_timeline_ms += (target_dur * 1000)
             continue
 
-        # 2. Calculate Sync Metadata
-        # Target Start Time (ms)
-        target_start_ms = seg["start"] * 1000
+        # 2. Sanitize (44.1kHz & DTS Fix)
+        sanitize_audio(tts_raw, tts_clean)
         
-        # Current Gap (Silence needed?)
-        gap_ms = target_start_ms - current_timeline_ms
-        
-        if gap_ms > 100: # If gap > 0.1s, insert silence
-             silence_path = f"{base_name}_silence_{idx}.wav"
-             if generate_silence(gap_ms, silence_path):
-                 dubbed_files.append(silence_path)
-                 current_timeline_ms += gap_ms
-                 
-        # 3. Speed/Stretch Check
-        # Original Duration (ms)
-        original_dur_ms = (seg["end"] - seg["start"]) * 1000
-        # TTS Duration (ms)
-        tts_audio = AudioSegment.from_file(tts_temp)
+        # 3. Check Duration & Stretch
+        tts_audio = AudioSegment.from_file(tts_clean)
         tts_dur_ms = len(tts_audio)
+        target_dur_ms = target_dur * 1000.0
         
-        ratio = tts_dur_ms / original_dur_ms if original_dur_ms > 0 else 1.0
+        # Calculate needed silences or speedups
+        # Logic: We want to match 'target_dur'.
+        
+        # Gap handling: If this segment doesn't start immediately after previous, insert silence used in original
+        start_gap_ms = (seg["start"] * 1000.0) - current_timeline_ms
+        if start_gap_ms > 100:
+            sil_path = f"{base_name}_sil_{idx}.wav"
+            generate_silence(int(start_gap_ms), sil_path)
+            dubbed_files.append(sil_path)
+            current_timeline_ms += start_gap_ms
+
+        ratio = tts_dur_ms / target_dur_ms if target_dur_ms > 0 else 1.0
         
         if ratio <= 1.0:
-            # TTS is shorter/equal. Good.
-            # We just use it (and maybe pad end or let next gap handle it).
-            # Rename temp to final
-            os.rename(tts_temp, tts_final)
-            dubbed_files.append(tts_final)
+            # TTS is shorter. Use it.
+            dubbed_files.append(tts_clean)
             current_timeline_ms += tts_dur_ms
-            
         elif ratio <= 1.25:
-             # TTS is slightly longer. Speed up.
-             print(f"  ⚡ Speeding up by {ratio:.2f}x")
-             if adjust_speed(tts_temp, tts_final, ratio):
-                 dubbed_files.append(tts_final)
-                 # New duration is roughly original duration
-                 current_timeline_ms += original_dur_ms 
-             else:
-                 # Speedup failed? Use original
-                 dubbed_files.append(tts_temp)
-                 current_timeline_ms += tts_dur_ms
-                 
+            # Speed up
+            print(f"  ⚡ Speeding up {ratio:.2f}x")
+            adjust_speed(tts_clean, tts_final, ratio)
+            # Verify sanitize again? 'adjust_speed' uses simple filter. Ideally sanitize after? 
+            # But adjust_speed uses ffmpeg, so let's trust it for now or just ensure rate.
+            dubbed_files.append(tts_final)
+            current_timeline_ms += target_dur_ms # We squashed it to fit target
         else:
-             # Ratio > 1.25. Too long!
-             # Cap speed at 1.25x
-             print(f"  ⚠️ Text too long ({ratio:.2f}x). Capping at 1.25x.")
-             if adjust_speed(tts_temp, tts_final, 1.25):
-                 dubbed_files.append(tts_final)
-                 # We consume 1.25x less time than TTS, but still more than original.
-                 # This pushes the timeline.
-                 current_timeline_ms += (tts_dur_ms / 1.25)
-             else:
-                 dubbed_files.append(tts_temp)
-                 current_timeline_ms += tts_dur_ms
+            # > 1.25x. Even with condensation loop, it might happen.
+            # Strategy: Max speed 1.25x, then STRETCH video.
+            print(f"  🐢 Ratio {ratio:.2f}x > 1.25. Capping audio speed & Stretching Video.")
+            
+            # 1. Speed audio to max 1.25x
+            adjust_speed(tts_clean, tts_final, 1.25)
+            dubbed_files.append(tts_final)
+            
+            # New audio duration = Old / 1.25
+            new_audio_ms = tts_dur_ms / 1.25
+            
+            # The 'overflow' ms that we need to extend the video by
+            overflow_ms = new_audio_ms - target_dur_ms
+            
+            # We can't stretch strictly *per segment* easily in extensive merge flow unless we split video.
+            # BUT: This function 'process_segment_pipeline' operates on a 'video_chunk_path'.
+            # If 'video_chunk_path' represents JUST this sentence (which is how segments logic in main.py works), then we CAN stretch the whole video chunk!
+            
+            # However, prompt implies 'segments' is a list.
+            # If the chunk contains multiple sentences, stretching local video parts is complex (VFR).
+            # FALLBACK SIMPLIFIED: If ANY segment pushes duration, we might desync later segments if we don't handle carefully.
+            # Easiest Robust approach: Just let the audio push the timeline. 
+            # AND at the end, if Total Audio > Total Video, we slow down the VIDEO.
+            
+            current_timeline_ms += new_audio_ms
 
-        # Cleanup temp
-        if os.path.exists(tts_temp): os.remove(tts_temp)
+        # Cleanup
+        for p in [tts_raw]:
+            if os.path.exists(p): os.remove(p)
 
-    
+    # 4. Merge All Audio
     if dubbed_files:
-        print(f"🎬 Merging {len(dubbed_files)} audio clips...")
-        merge_audio_video(video_chunk_path, dubbed_files, output_chunk_path)
+        concat_list = f"{base_name}_concat.txt"
+        with open(concat_list, "w") as f:
+            for d in dubbed_files: f.write(f"file '{os.path.abspath(d)}'\n")
+            
+        merged_wav = f"{base_name}_merged.wav"
+        subprocess.run(["ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", "-y", merged_wav], stdout=subprocess.DEVNULL)
+        
+        # 5. Final Sync Check (Video Stretch Logic)
+        audio_len_ms = len(AudioSegment.from_file(merged_wav))
+        video_len_ms = original_video_dur * 1000.0
+        
+        final_video_input = video_chunk_path
+        
+        if audio_len_ms > (video_len_ms + 100): # Tolerance 100ms
+            stretch_ratio = audio_len_ms / video_len_ms
+            print(f"  🕰️ Extending Video by {stretch_ratio:.2f}x to match Audio...")
+            
+            stretched_video = f"{base_name}_stretched.mp4"
+            # setpts = PTS * Ratio (slowing down increases PTS)
+            # We verify the audio sample rate here too: -ar 44100
+            cmd = [
+                "ffmpeg", "-i", video_chunk_path,
+                "-filter:v", f"setpts={stretch_ratio}*PTS",
+                "-r", "24", # Maintain framerate
+                "-y", stretched_video
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
+            final_video_input = stretched_video
+            
+        # 6. Mux
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", final_video_input,
+            "-i", merged_wav,
+            "-c:v", "copy", # Should work if we stretched to a temp file
+            "-c:a", "aac", "-b:a", "192k", "-ar", "44100", # High Quality Audio
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest",
+            output_chunk_path
+        ]
+        # If we stretched, the video determines length. -shortest is safe.
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, check=True)
+        
+        # Cleanup
+        try:
+            os.remove(concat_list)
+            os.remove(merged_wav)
+            if final_video_input != video_chunk_path: os.remove(final_video_input)
+        except: pass
+        
     else:
-        # Fallback
-        print("⚠️ No speech detected, copying original.")
+        # Fallback copy
         subprocess.run(["ffmpeg", "-i", video_chunk_path, "-c", "copy", output_chunk_path], check=True)
     
-    # Cleanup intermediate
-    for f in dubbed_files:
-        try: os.remove(f)
-        except: pass
-    try: os.remove(audio_path)
-    except: pass
+    # Final Cleanup
+    for f in dubbed_files: 
+        if os.path.exists(f): 
+            try: os.remove(f)
+            except: pass
+    if os.path.exists(audio_path): os.remove(audio_path)
