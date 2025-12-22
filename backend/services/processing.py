@@ -57,6 +57,17 @@ def smart_transcribe(audio_path: str):
     # 2. Gemini Enrichment (Speaker/Gender/Emotion)
     if segments and gemini_client:
         try:
+            # DEBUG: Check Library Version and Available Models
+            import google.generativeai as genai_debug
+            try:
+                print(f"DEBUG: Google GenAI Library Version: {genai_debug.__version__}")
+                print("DEBUG: Listing Available Models...")
+                for m in genai_debug.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        print(f"   - Found Model: {m.name}")
+            except Exception as e:
+                print(f"DEBUG: Could not list models: {e}")
+
             gl_file = gemini_client.files.upload(file=audio_path)
             while gl_file.state.name == "PROCESSING":
                 time.sleep(1)
