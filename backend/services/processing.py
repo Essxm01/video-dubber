@@ -31,6 +31,8 @@ def discover_best_gemini_model(client):
     # Fallback to a known stable model if dynamic discovery fails
     return 'gemini-1.5-flash' 
 
+from google.api_core.exceptions import ResourceExhausted
+
 # --- STT & ENRICHMENT ---
 def smart_transcribe(audio_path: str):
     segments = []
@@ -72,17 +74,32 @@ def smart_transcribe(audio_path: str):
             Output JSON: [{{ "id": 0, "ar_text": "...", "emotion": "neutral", "gender": "Male", "speaker": "Speaker A" }}]
             """
 
-            
-            # Using specific latest model version to avoid 404
-            response = gemini_client.models.generate_content(
-                model='gemini-2.0-flash-exp', 
-                contents=[prompt, gl_file],
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
+            # Retry Logic for Quota (429)
+            response = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Using stable model to avoid quota limits
+                    response = gemini_client.models.generate_content(
+                        model='gemini-1.5-flash', 
+                        contents=[prompt, gl_file],
+                        config=types.GenerateContentConfig(response_mime_type="application/json")
+                    )
+                    break # Success
+                except ResourceExhausted:
+                    wait_time = (attempt + 1) * 10
+                    print(f"⚠️ Quota hit (429). Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                except Exception as e:
+                    print(f"⚠️ Enrichment Attempt {attempt+1} Error: {e}")
+                    # If it's not a quota error, maybe we shouldn't retry? 
+                    # But often 500s are retryable. We'll continue.
+                    time.sleep(2)
+
             try: gemini_client.files.delete(name=gl_file.name)
             except: pass
 
-            if response.text:
+            if response and response.text:
                 enrichment_map = {item['id']: item for item in json.loads(response.text)}
                 for i, seg in enumerate(segments):
                     if i in enrichment_map:
