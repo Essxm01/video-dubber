@@ -250,7 +250,7 @@ function App() {
         throw new Error(uploadResult.error || "Invalid Server Response: No Job ID");
       }
 
-      const taskId = uploadResult.task_id; // Keeping original variable name for consistency below
+      const taskId = uploadResult.taskId || uploadResult.task_id;
 
 
       showSuccess(lang === 'ar' ? 'تم رفع الفيديو! جاري المعالجة...' : 'Upload complete! Processing...');
