@@ -135,7 +135,7 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
     if gemini_client:
         try:
             resp = gemini_client.models.generate_content(
-                model='gemini-2.0-flash-exp',
+                model='gemini-1.5-flash',
                 contents=f"Convert to SSML for Azure TTS (ar-EG-ShakirNeural). Emotion: {emotion}. Text: {text}. Output only SSML."
             )
             val = resp.text.replace("```xml", "").replace("```", "").strip()
