@@ -74,14 +74,17 @@ def smart_transcribe(audio_path: str):
             Output JSON: [{{ "id": 0, "ar_text": "...", "emotion": "neutral", "gender": "Male", "speaker": "Speaker A" }}]
             """
 
-            # Retry Logic for Quota (429)
+            # Retry Logic for Quota (429) and Model Not Found (404)
+            from google.api_core.exceptions import NotFound
+
             response = None
             max_retries = 3
+            current_model = 'gemini-1.5-flash'
+
             for attempt in range(max_retries):
                 try:
-                    # Using stable model to avoid quota limits
                     response = gemini_client.models.generate_content(
-                        model='gemini-1.5-flash', 
+                        model=current_model, 
                         contents=[prompt, gl_file],
                         config=types.GenerateContentConfig(response_mime_type="application/json")
                     )
@@ -90,10 +93,13 @@ def smart_transcribe(audio_path: str):
                     wait_time = (attempt + 1) * 10
                     print(f"⚠️ Quota hit (429). Retrying in {wait_time}s...")
                     time.sleep(wait_time)
+                except NotFound:
+                    print(f"⚠️ Model {current_model} NOT FOUND (404). Switching to gemini-pro.")
+                    current_model = 'gemini-pro'
+                    # Retry immediately with new model
+                    continue
                 except Exception as e:
                     print(f"⚠️ Enrichment Attempt {attempt+1} Error: {e}")
-                    # If it's not a quota error, maybe we shouldn't retry? 
-                    # But often 500s are retryable. We'll continue.
                     time.sleep(2)
 
             try: gemini_client.files.delete(name=gl_file.name)
