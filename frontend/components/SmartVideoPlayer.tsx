@@ -188,19 +188,25 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                         const failed = seg.status === 'failed';
 
                         return (
-                            <button
+                            <div
                                 key={seg.segment_index}
-                                onClick={() => selectSegment(idx)}
-                                disabled={!ready}
                                 className={`
                                     relative w-full text-right p-4 rounded-xl border transition-all duration-200 flex flex-col gap-2 group
+                                    ${ready ? 'cursor-pointer' : 'cursor-not-allowed'}
                                     ${active ? 'border-indigo-500 bg-white shadow-lg ring-1 ring-indigo-500 transform scale-[1.02] z-10' :
                                         ready ? 'border-green-200 bg-green-50/50 hover:bg-white' :
                                             processing ? 'border-blue-200 bg-blue-50/50' : 'border-red-200 bg-red-50'}
                                     ${!ready && !active ? 'opacity-70 grayscale-[0.3]' : ''}
                                 `}
                             >
-                                <div className="flex justify-between items-start w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => ready && selectSegment(idx)}
+                                    disabled={!ready}
+                                    className="absolute inset-0 w-full h-full z-0 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl"
+                                    aria-label={`Play segment ${idx + 1}`}
+                                />
+                                <div className="relative z-10 pointer-events-none flex justify-between items-start w-full">
                                     <div className="flex items-center gap-3">
                                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
                                             {idx + 1}
@@ -220,7 +226,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                                         download
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="p-1 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors"
+                                                        className="p-1 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors pointer-events-auto"
                                                         title="تحميل المقطع"
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
@@ -235,7 +241,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                         </div>
                                     </div>
                                 </div>
-                            </button>
+                            </div>
                         );
                     })}
                 </div>
@@ -292,7 +298,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                 {/* FIX 3: REAL CONTROLS BAR */}
                 {isReady && (
                     <div className="bg-zinc-900 text-white p-3 flex items-center gap-4 border-t border-zinc-800" dir="ltr">
-                        <button onClick={togglePlay} className="hover:text-indigo-400">
+                        <button onClick={togglePlay} className="hover:text-indigo-400" aria-label={isPlaying ? "Pause" : "Play"} title={isPlaying ? "Pause" : "Play"}>
                             {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current" />}
                         </button>
 
@@ -305,6 +311,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                 max={duration || 100}
                                 value={currentTime}
                                 onChange={handleSeek}
+                                aria-label="Seek video"
                                 className="flex-1 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-indigo-500 [&::-webkit-slider-thumb]:rounded-full"
                             />
                             <span className="text-xs font-mono text-zinc-400">{formatTime(duration)}</span>
@@ -312,7 +319,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
 
                         {/* Volume */}
                         <div className="flex items-center gap-2 w-32">
-                            <button onClick={() => setIsMuted(!isMuted)}>
+                            <button onClick={() => setIsMuted(!isMuted)} aria-label={isMuted ? "Unmute" : "Mute"} title={isMuted ? "Unmute" : "Mute"}>
                                 {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                             </button>
                             <input
@@ -325,6 +332,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                                     setVolume(parseFloat(e.target.value));
                                     setIsMuted(parseFloat(e.target.value) === 0);
                                 }}
+                                aria-label="Volume control"
                                 className="w-full h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                             />
                         </div>
@@ -334,7 +342,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                             <Captions className="w-5 h-5" />
                         </button>
 
-                        <button onClick={toggleFullscreen} className="hover:text-indigo-400">
+                        <button onClick={toggleFullscreen} className="hover:text-indigo-400" aria-label="Toggle Fullscreen" title="Toggle Fullscreen">
                             <Maximize className="w-5 h-5" />
                         </button>
                     </div>

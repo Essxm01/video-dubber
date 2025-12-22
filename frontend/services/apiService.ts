@@ -9,13 +9,14 @@ export const BACKEND_URL = API_BASE_URL;
 export interface TaskResponse {
   task_id: string;
   status: string;
-  progress: number;
-  message: string;
+  progress?: number;
+  message?: string;
   result?: {
     dubbed_video_url?: string;
     title?: string;
     [key: string]: any;
   };
+  thumbnail_url?: string;
 }
 
 export interface VideoSegment {
