@@ -59,7 +59,8 @@ export const uploadVideo = async (
   targetLanguage: string = 'ar',
   voice: string = 'female',  // NEW: Voice selection
   generateSrt: boolean = true  // NEW: SRT generation
-): Promise<{ taskId: string; success: boolean; error?: string }> => {
+  generateSrt: boolean = true  // NEW: SRT generation
+): Promise<{ taskId: string; task_id?: string; thumbnail_url?: string; success: boolean; error?: string }> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('mode', mode);
@@ -75,7 +76,9 @@ export const uploadVideo = async (
 
     return {
       taskId: response.data.task_id,
-      success: true
+      task_id: response.data.task_id, // Compatibility
+      success: true,
+      thumbnail_url: response.data.thumbnail_url // Add thumbnail if present
     };
   } catch (error: any) {
     console.error("Upload Error:", error);

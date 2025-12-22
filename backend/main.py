@@ -134,6 +134,11 @@ def get_job_status(job_id: str, request: Request):
 @app.get("/status/{task_id}")
 def get_task_status_legacy(task_id: str):
     """Legacy status endpoint - returns job segments."""
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        return {"error": "Invalid Job ID format"}, 400
+
     segments = db_service.get_job_segments(task_id)
     
     # Determine overall progress
