@@ -139,16 +139,21 @@ def smart_transcribe(audio_path: str):
             
             simplified = [{"id": i, "start": s["start"], "end": s["end"], "text": s["text"]} for i, s in enumerate(segments)]
             prompt = f"""
-            Task: Listen carefully to the audio. Diarize speakers (Speaker A, Speaker B).
-            CRITICAL: Identify gender based on PITCH and TONE. 
-            Translate text to Professional Arabic (Fusha).
-            CRITICAL: Translate FULLY. Do not summarize or merge sentences. Do not skip greetings or names.
-            CRITICAL: Output the Arabic text with **full Diacritics (Tashkeel)** to ensure correct pronunciation.
-            If the source text is an interjection (Wow, Oh, Um) or noise, keep it extremely short or ignore.
+            Task: Listen carefully to the audio. Diarize and analyze context.
+            1. Identify Speaker Gender based on Context + Pitch (M=Male, F=Female).
+            2. Identify Emotion (happy, sad, angry, neutral).
+            3. Translate to Professional Arabic (Fusha).
+            
+            CRITICAL CONSTRAINTS:
+            - Use **Light Diacritics (التشكيل الوظيفي)** only on letters where pronunciation might be ambiguous. Do NOT over-vowelize.
+            - Strictly **NO English/Latin characters**. Transliterate names (e.g., Mark -> مارك). Delete technical jargon if untranslatable.
+            - Translate FULLY. Do not summarize or merge sentences. Preserve the flow.
+            
+            If text is music/noise, set text to "[Music]" or "(Silence)".
             
             Input: {json.dumps(simplified)}
             
-            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker": "Speaker A", "emotion": "neutral" }}]
+            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker": "Speaker A", "gender": "M", "emotion": "neutral" }}]
             """
 
             response = None
@@ -271,32 +276,21 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         # Calculate target duration FIRST (Used by Intro Guard & VAD)
         target_dur = seg["end"] - seg["start"]
         
-        # V6: Intro Guard
-        # Skip anything in the first 5 seconds (Music/Intro)
-        if seg["start"] < 5.0:
-            print(f"  🎵 Intro Guard: Skipping segment at {seg['start']}s (Intro/Music)")
-            # Extract original audio just in case we need to preserve timeline? 
-            # Actually, if we skip, we usually want to KEEP the original audio for this duration.
-            # Logic below handles 'continue' by effectively doing nothing? 
-            # WAIT. If we 'continue', we skip adding to 'dubbed_files'. 
-            # If we skip adding to 'dubbed_files', the 'current_timeline_ms' won't advance?
-            # NO. We MUST add the original audio to 'dubbed_files' to keep the timeline in sync!
-            
-            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL)
-            sanitize_audio(tts_final, tts_final)
-            dubbed_files.append(tts_final)
-            current_timeline_ms += (target_dur * 1000)
-            continue
-
-        # 1. VAD / Noise Filter
+        # V8: Smart VAD & English Purge
+        # 1. Dynamic VAD Filter (No hardcoded start strings)
         no_speech = seg.get("no_speech_prob", 0.0)
-        # target_dur already calculated above
         
-        if no_speech > 0.4 or not text or len(text) < 2:
-            print(f"  ⏭️ Skipping Segment {idx} (No Speech Prob: {no_speech:.2f})")
-            # Fill with silence or original noise? Original audio is best for background.
-            # Extract original audio for this duration
+        # English/Regex Purge
+        import re
+        # Remove A-Z, a-z. Keep Arabic, punctuation, numbers.
+        text_clean = re.sub(r"[a-zA-Z]", "", text).strip()
+        
+        # Check for Music/Silence tokens from Gemini
+        is_music_token = text in ["[Music]", "[Applause]", "(Silence)", ""]
+        
+        if no_speech > 0.45 or is_music_token or len(text_clean) < 2:
+            print(f"  ⏭️ Smart VAD: Skipping Segment {idx} (Prob: {no_speech:.2f}, Text: '{text}')")
+            # Preserve original audio
             cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
             subprocess.run(cmd, stdout=subprocess.DEVNULL)
             sanitize_audio(tts_final, tts_final)
@@ -304,16 +298,37 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             current_timeline_ms += (target_dur * 1000)
             continue
             
-        # 2. Voice Mapping (Dual Male)
-        speaker = seg.get("speaker", "Speaker A")
+        # 2. Hybrid Gender & Emotion Mapping
+        gender = seg.get("gender", "M").upper().strip()
+        emotion = seg.get("emotion", "neutral").lower().strip()
         
-        # Heuristic: Speaker B or numbers usually mean second speaker
-        if "B" in speaker or "2" in str(speaker):
-            voice = "ar-SA-HamedNeural" # Saudi Male
+        # Map Voice
+        if "F" in gender:
+            voice = "ar-EG-SalmaNeural" # Female
+        elif "M" in gender:
+            voice = "ar-EG-ShakirNeural" # Male
         else:
-            voice = "ar-EG-ShakirNeural" # Egyptian Male
-            
-        style = "cheerful" if "!" in text or seg.get("emotion") == "happy" else "neutral"
+            # Fallback to simple heuristics if gender missing
+            speaker = seg.get("speaker", "Speaker A")
+            if "B" in speaker or "2" in str(speaker):
+                voice = "ar-SA-HamedNeural"
+            else:
+                voice = "ar-EG-ShakirNeural"
+
+        # Map Style (Emotions)
+        # Azure Styles: cheerful, sad, angry, excited, hopeful, unfriendly, terrifying, shouting, whispering
+        style_map = {
+            "happy": "cheerful",
+            "excited": "cheerful",
+            "sad": "sad",
+            "concerned": "sad",
+            "angry": "angry",
+            "shouting": "shouting"
+        }
+        style = style_map.get(emotion, "neutral")
+        if style == "neutral": style = "" # Default (empty) usually safer for general
+        
+        text = text_clean # Use the purged text
 
         # 3. Smart Sync Check (Condense Loop)
         est_chars_per_sec = 13
