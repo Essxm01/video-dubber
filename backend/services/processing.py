@@ -142,7 +142,8 @@ def smart_transcribe(audio_path: str):
             Task: Listen carefully to the audio. Diarize speakers (Speaker A, Speaker B).
             CRITICAL: Identify gender based on PITCH and TONE. 
             Translate text to Professional Arabic (Fusha).
-            CRITICAL: The Arabic output must be CONCISE (Short & Brief) to fit video timing.
+            CRITICAL: Translate FULLY. Do not summarize or merge sentences. Do not skip greetings or names.
+            CRITICAL: Output the Arabic text with **full Diacritics (Tashkeel)** to ensure correct pronunciation.
             If the source text is an interjection (Wow, Oh, Um) or noise, keep it extremely short or ignore.
             
             Input: {json.dumps(simplified)}
@@ -318,8 +319,8 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         est_chars_per_sec = 13
         est_duration = len(text) / est_chars_per_sec
         
-        if est_duration > (target_dur * 1.3):
-             print(f"  📉 Predicted Text Too Long (Est {est_duration:.2f}s vs Max {target_dur*1.3:.2f}s). Condensing...")
+        if est_duration > (target_dur * 1.20):
+             print(f"  📉 Predicted Text Too Long (Est {est_duration:.2f}s vs Max {target_dur*1.20:.2f}s). Condensing...")
              text = condense_text(text, target_dur, est_duration)
         
         print(f"  🗣️ Gen Azure TTS ({voice}): {text[:30]}...")
@@ -370,7 +371,7 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         if ratio <= 1.0:
             dubbed_files.append(tts_clean)
             current_timeline_ms += tts_dur_ms
-        elif ratio <= 1.25:
+        elif ratio <= 1.20:
             print(f"  ⚡ Speeding up {ratio:.2f}x")
             adjust_speed(tts_clean, tts_final, ratio)
             dubbed_files.append(tts_final)
@@ -384,12 +385,12 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             dubbed_files.append(tts_final)
             current_timeline_ms += (target_dur * 1000)
         else:
-            # > 1.25x but <= 2.0
-            # Cap speed at 1.25x and STRETCH VIDEO later
+            # > 1.20x but <= 2.0
+            # Cap speed at 1.20x and STRETCH VIDEO later
             print(f"  🐢 Ratio {ratio:.2f}x. Capping speed & Will Stretch Video.")
-            adjust_speed(tts_clean, tts_final, 1.25)
+            adjust_speed(tts_clean, tts_final, 1.20)
             dubbed_files.append(tts_final)
-            new_dur = tts_dur_ms / 1.25
+            new_dur = tts_dur_ms / 1.20
             current_timeline_ms += new_dur
             
         # Cleanup temp
