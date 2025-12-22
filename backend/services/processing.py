@@ -31,6 +31,21 @@ def discover_best_gemini_model(client):
     # Fallback to a known stable model if dynamic discovery fails
     return 'gemini-2.0-flash' 
 
+def is_speech(audio_path: str, silence_threshold=-40.0, min_duration=0.5) -> bool:
+    """
+    Simple VAD: Checks if audio has enough energy to be speech.
+    Prevents translating mute/noise segments.
+    """
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        if len(audio) < (min_duration * 1000):
+            return False
+        if audio.dBFS < silence_threshold:
+            return False
+        return True
+    except:
+        return True # Fallback to processing if check fails 
+
 from google.api_core.exceptions import ResourceExhausted
 
 # --- STT & ENRICHMENT ---
@@ -151,6 +166,15 @@ def optimize_segments_for_flow(segments, gap_threshold=0.75, max_chars=280):
     optimized.append(current)
     return optimized
 
+def clean_text(text: str) -> str:
+    """Removes hallucinations like [Music], (Sound), *Effects*."""
+    import re
+    # Remove [...] (...) *...*
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"\(.*?\)", "", text)
+    text = re.sub(r"\*.*?\*", "", text)
+    return text.strip()
+
 def condense_text(text: str, target_seconds: float, current_est_seconds: float) -> str:
     """Uses Gemini to summarize/condense Arabic text to fit the duration."""
     if not gemini_client: return text
@@ -216,6 +240,9 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
     try:
         speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
         speech_config.speech_synthesis_voice_name = voice_name
+        # Fix 3: Request Native 44.1kHz from Azure (Highest Quality)
+        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Riff44100Hz16BitMonoPcm)
+        
         audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
         
@@ -337,8 +364,11 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         tts_clean = f"{base_name}_tts_clean_{idx}.wav"
         tts_final = f"{base_name}_tts_final_{idx}.wav"
         
-        text = seg["text"]
-        
+        text = clean_text(seg["text"])
+        if not text or len(text) < 2:
+            print(f"  ⏭️ Skipping empty/short segment {idx}")
+            continue
+
         # 0. Smart Condensation
         # Est. Duration: ~13 chars per second for Arabic
         est_chars_per_sec = 13
@@ -356,7 +386,16 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             text = condense_text(text, target_dur, est_duration)
             
         # 1. Generate Raw TTS
-        voice = "ar-EG-ShakirNeural" if seg.get("gender") == "Male" else "ar-EG-SalmaNeural"
+        # V4: Dual Male Voice Logic
+        gender = seg.get("gender", "Male")
+        speaker = seg.get("speaker", "Speaker A")
+        
+        if gender == "Male":
+            if "B" in speaker: voice = "ar-SA-HamedNeural" # Distinct Male
+            else: voice = "ar-EG-ShakirNeural" # Default Male
+        else:
+            voice = "ar-EG-SalmaNeural" # Female
+
         print(f"  🗣️ Gen TTS ({voice}): {text[:30]}...")
         time.sleep(2) # Anti-rate limit
         
