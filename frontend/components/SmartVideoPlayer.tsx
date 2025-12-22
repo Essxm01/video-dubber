@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Play, Pause, Loader2, RefreshCw, Volume2, VolumeX,
-    Maximize, SkipForward, List, CheckCircle, AlertCircle, Clock, Lock, Captions
+    Maximize, SkipForward, List, CheckCircle, AlertCircle, Clock, Lock, Captions, Upload
 } from 'lucide-react';
 import { getJobDetails, VideoSegment } from '../services/apiService';
 
