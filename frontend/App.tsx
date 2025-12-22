@@ -258,7 +258,7 @@ function App() {
       // Update Metadata with Thumbnail if available
       if (uploadResult.thumbnail_url) {
         setMetadata(prev => prev ? { ...prev, thumbnail: uploadResult.thumbnail_url } : {
-          url: uploadResult.job_id,
+          url: taskId,
           title: file.name,
           // duration: '...',
           thumbnail: uploadResult.thumbnail_url,
@@ -268,6 +268,10 @@ function App() {
 
       // Start Polling
       const poll = setInterval(async () => {
+        if (!taskId || taskId === 'undefined') {
+          clearInterval(poll);
+          return;
+        }
 
         try {
           const { status, completed, failed, result } = await getTaskStatus(taskId);
