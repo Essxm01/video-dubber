@@ -78,6 +78,8 @@ class DatabaseService:
                 return res.data
             except Exception as e:
                 print(f"⚠️ DB Fetch Error (Attempt {attempt+1}): {e}")
+                import traceback
+                traceback.print_stack()
                 time.sleep(1) # Wait 1s and retry
         return []
 
