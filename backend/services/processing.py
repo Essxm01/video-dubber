@@ -2,7 +2,6 @@ import os
 import time
 import json
 import subprocess
-import nest_asyncio
 from datetime import datetime
 from pydub import AudioSegment
 from groq import Groq
@@ -352,8 +351,16 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             adjust_speed(tts_clean, tts_final, ratio)
             dubbed_files.append(tts_final)
             current_timeline_ms += target_dur_ms
+        elif ratio > 2.0:
+            # PANIC MODE: Hallucination or Text too long.
+            print(f"  ⚠️ PANIC: Ratio {ratio:.2f}x > 2.0. Dropping TTS & Using Original Audio.")
+            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL)
+            sanitize_audio(tts_final, tts_final)
+            dubbed_files.append(tts_final)
+            current_timeline_ms += (target_dur * 1000)
         else:
-            # > 1.25x
+            # > 1.25x but <= 2.0
             # Cap speed at 1.25x and STRETCH VIDEO later
             print(f"  🐢 Ratio {ratio:.2f}x. Capping speed & Will Stretch Video.")
             adjust_speed(tts_clean, tts_final, 1.25)
