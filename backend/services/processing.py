@@ -29,7 +29,7 @@ except Exception as e:
 # --- HELPERS ---
 def discover_best_gemini_model(client):
     # Fallback to a known stable model if dynamic discovery fails
-    return 'gemini-1.5-flash' 
+    return 'gemini-2.0-flash' 
 
 from google.api_core.exceptions import ResourceExhausted
 
@@ -90,7 +90,7 @@ def smart_transcribe(audio_path: str):
 
             response = None
             max_retries = 3
-            current_model = 'gemini-1.5-flash'
+            current_model = 'gemini-2.0-flash'
 
             for attempt in range(max_retries):
                 try:
@@ -110,8 +110,8 @@ def smart_transcribe(audio_path: str):
                     
                     # 🚨 CRITICAL SWITCH: If Flash fails (404), switch to Pro immediately
                     if "404" in error_str or "NOT_FOUND" in error_str:
-                        print(f"🔄 Model '{current_model}' caused 404. Switching to 'gemini-pro' for next attempt.")
-                        current_model = 'gemini-pro'
+                        print(f"🔄 Model '{current_model}' caused 404. Switching to 'gemini-flash-latest' for next attempt.")
+                        current_model = 'gemini-flash-latest'
                         time.sleep(1)
                         continue # Retry immediately
                     
@@ -156,7 +156,7 @@ def generate_audio_gemini(text: str, path: str, emotion: str = "neutral", voice_
     if gemini_client:
         try:
             resp = gemini_client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash',
                 contents=f"Convert to SSML for Azure TTS (ar-EG-ShakirNeural). Emotion: {emotion}. Text: {text}. Output only SSML."
             )
             val = resp.text.replace("```xml", "").replace("```", "").strip()
