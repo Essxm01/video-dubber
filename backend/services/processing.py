@@ -267,6 +267,9 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         
         text = clean_text(seg["text"])
         
+        # Calculate target duration FIRST (Used by Intro Guard & VAD)
+        target_dur = seg["end"] - seg["start"]
+        
         # V6: Intro Guard
         # Skip anything in the first 5 seconds (Music/Intro)
         if seg["start"] < 5.0:
@@ -287,7 +290,7 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
 
         # 1. VAD / Noise Filter
         no_speech = seg.get("no_speech_prob", 0.0)
-        target_dur = seg["end"] - seg["start"]
+        # target_dur already calculated above
         
         if no_speech > 0.4 or not text or len(text) < 2:
             print(f"  ⏭️ Skipping Segment {idx} (No Speech Prob: {no_speech:.2f})")
