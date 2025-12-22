@@ -192,9 +192,20 @@ def generate_audio_azure(text: str, path: str, voice: str, style: str = "neutral
     try:
         speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
         
-        # High Fidelity Output (44.1kHz)
-        # Using Audio44100Hz16BitMonoMp3 for better quality than default 16kHz
-        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio44100Hz16BitMonoMp3)
+        # Dynamic Audio Quality with Fallback
+        try:
+            # Try High Quality (24kHz - Native for Neural)
+            speech_config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Audio24Khz16BitMonoMp3
+            )
+        except AttributeError:
+            print("⚠️ 24kHz format not found, falling back to 16kHz...")
+            try:
+                speech_config.set_speech_synthesis_output_format(
+                    speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128kBitRateMonoMp3
+                )
+            except:
+                print("⚠️ Falling back to default format.")
         
         speech_config.speech_synthesis_voice_name = voice
         audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
