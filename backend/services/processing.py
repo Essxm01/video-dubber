@@ -192,20 +192,12 @@ def generate_audio_azure(text: str, path: str, voice: str, style: str = "neutral
     try:
         speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
         
-        # Dynamic Audio Quality with Fallback
-        try:
-            # Try High Quality (24kHz - Native for Neural)
-            speech_config.set_speech_synthesis_output_format(
-                speechsdk.SpeechSynthesisOutputFormat.Audio24Khz16BitMonoMp3
-            )
-        except AttributeError:
-            print("⚠️ 24kHz format not found, falling back to 16kHz...")
-            try:
-                speech_config.set_speech_synthesis_output_format(
-                    speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128kBitRateMonoMp3
-                )
-            except:
-                print("⚠️ Falling back to default format.")
+        # High Fidelity Output (24kHz Native String)
+        # Fix: V6 - Use string identifier to avoid Enum version issues
+        speech_config.set_property(
+            speechsdk.PropertyId.SpeechServiceConnection_SynthOutputFormat, 
+            "audio-24khz-160kbitrate-mono-mp3"
+        )
         
         speech_config.speech_synthesis_voice_name = voice
         audio_config = speechsdk.audio.AudioOutputConfig(filename=path)
@@ -275,6 +267,24 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         
         text = clean_text(seg["text"])
         
+        # V6: Intro Guard
+        # Skip anything in the first 5 seconds (Music/Intro)
+        if seg["start"] < 5.0:
+            print(f"  🎵 Intro Guard: Skipping segment at {seg['start']}s (Intro/Music)")
+            # Extract original audio just in case we need to preserve timeline? 
+            # Actually, if we skip, we usually want to KEEP the original audio for this duration.
+            # Logic below handles 'continue' by effectively doing nothing? 
+            # WAIT. If we 'continue', we skip adding to 'dubbed_files'. 
+            # If we skip adding to 'dubbed_files', the 'current_timeline_ms' won't advance?
+            # NO. We MUST add the original audio to 'dubbed_files' to keep the timeline in sync!
+            
+            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL)
+            sanitize_audio(tts_final, tts_final)
+            dubbed_files.append(tts_final)
+            current_timeline_ms += (target_dur * 1000)
+            continue
+
         # 1. VAD / Noise Filter
         no_speech = seg.get("no_speech_prob", 0.0)
         target_dur = seg["end"] - seg["start"]
