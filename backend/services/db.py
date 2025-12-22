@@ -55,6 +55,10 @@ class DatabaseService:
 
     def update_segment_status(self, job_id: str, index: int, status: str, media_url: str = None, gcs_path: str = None):
         self._ensure_connection()
+        # DEBUG: Prove to user that we have the right ID
+        if status == "processing":
+            print(f"DEBUG_DB_INTERNAL: Updating job_id='{job_id}' index={index} status='{status}'")
+
         if not self.client: return
         try:
             data = {"status": status}

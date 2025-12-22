@@ -185,6 +185,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({ jobId, poste
                         const active = idx === currentIndex;
                         const ready = seg.status === 'ready';
                         const processing = seg.status === 'processing' || seg.status === 'pending';
+                        const failed = seg.status === 'failed';
 
                         return (
                             <button
