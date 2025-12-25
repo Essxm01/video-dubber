@@ -135,3 +135,4 @@ MIT License © 2025 Arab Dubbing
 <div align="center">
 Made with ❤️ for the Arab world
 </div>
+<!-- Last Deploy Trigger: 12/25/2025 08:19:52 -->
