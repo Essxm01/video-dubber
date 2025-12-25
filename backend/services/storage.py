@@ -9,7 +9,7 @@ class GCSStorage:
         self.credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         self.credentials_json_str = os.getenv("GCS_CREDENTIALS_JSON")
         self.project_id = os.getenv("GCP_PROJECT_ID")
-        self.bucket_name = "processed-segments" # Default bucket
+        self.bucket_name = os.getenv("GCS_BUCKET_NAME", "processed-segments")
         
         self.client = None
         
