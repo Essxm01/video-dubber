@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { ProcessingStage, TaskStatus, ServiceMode } from '../types';
 
-// ✅ LIVE RENDER BACKEND
-export const API_BASE_URL = 'https://video-dubber-5zuo.onrender.com';
+// ✅ LIVE KOYEB BACKEND (V9)
+export const API_BASE_URL = 'https://sacred-fawn-arab-dubbing-7b0a1186.koyeb.app';
 export const BACKEND_URL = API_BASE_URL;
 
 // --- Interfaces ---
@@ -58,27 +58,34 @@ export const uploadVideo = async (
   file: File,
   mode: ServiceMode,
   targetLanguage: string = 'ar',
-  voice: string = 'female',  // NEW: Voice selection
-  generateSrt: boolean = true  // NEW: SRT generation
+  voice: string = 'female',
+  generateSrt: boolean = true
 ): Promise<{ taskId: string; task_id?: string; thumbnail_url?: string; success: boolean; error?: string }> => {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('mode', mode);
   formData.append('target_lang', targetLanguage);
+
+  // V9 Backend simply requires file + mode + target_lang
+  // voice/srt params might be ignored by V9 simple pipeline but request them just in case
   formData.append('voice', voice);
   formData.append('generate_srt_file', generateSrt ? 'true' : 'false');
 
   try {
-    const response = await axios.post<TaskResponse>(`${API_BASE_URL}/process-video`, formData, {
+    // USE NEW /upload ENDPOINT (Async)
+    const response = await axios.post(`${API_BASE_URL}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60000, // 60s timeout for initial handshake (job creation)
+      timeout: 120000, // 2 mins to be safe
     });
 
+    const data = response.data;
+    const jobId = data.job_id || data.task_id;
+
     return {
-      taskId: response.data.task_id,
-      task_id: response.data.task_id, // Compatibility
+      taskId: jobId,
+      task_id: jobId,
       success: true,
-      thumbnail_url: response.data.thumbnail_url // Add thumbnail if present
+      thumbnail_url: data.thumbnail_url
     };
   } catch (error: any) {
     console.error("Upload Error:", error);
@@ -102,26 +109,58 @@ export const getTaskStatus = async (taskId: string): Promise<{
   result?: TaskResponse['result'];
 }> => {
   try {
-    const response = await axios.get<TaskResponse>(`${API_BASE_URL}/status/${taskId}`);
+    // Use NEW /job endpoint
+    const response = await axios.get<JobDetails>(`${API_BASE_URL}/job/${taskId}`);
     const data = response.data;
+    const segments = data.segments || [];
+
+    // Calculate aggregated status
+    const total = segments.length;
+    const readyCount = segments.filter(s => s.status === 'ready').length;
+    const failedCount = segments.filter(s => s.status === 'failed').length;
+
+    let progress = 0;
+    if (total > 0) {
+      progress = Math.round((readyCount / total) * 100);
+    }
+
+    const isCompleted = total > 0 && readyCount === total;
+    const isFailed = failedCount > 0;
+
+    // Determine overall status string for mapping stage
+    let statusStr = 'PROCESSING';
+    if (isCompleted) statusStr = 'COMPLETED';
+    else if (isFailed) statusStr = 'FAILED';
+    else if (total === 0) statusStr = 'PENDING';
 
     const status: TaskStatus = {
       taskId: taskId,
-      progress: data.progress || 0,
-      stage: mapStatusToStage(data.status),
-      message: data.message || ''
+      progress: progress,
+      stage: mapStatusToStage(statusStr),
+      message: isCompleted ? 'تمت الدبلجة بنجاح!' : `جاري المعالجة (${readyCount}/${total})...`
     };
 
-    // Ensure absolute URL for video
-    if (data.result?.dubbed_video_url && !data.result.dubbed_video_url.startsWith('http')) {
-      data.result.dubbed_video_url = `${API_BASE_URL}${data.result.dubbed_video_url}`;
+    // Synthesize result
+    let result = undefined;
+    if (isCompleted && segments.length > 0) {
+      // Find first media url
+      const firstUrl = segments[0].media_url;
+      result = {
+        dubbed_video_url: firstUrl?.startsWith('http') || firstUrl?.startsWith('/') ? firstUrl : `${API_BASE_URL}${firstUrl}`,
+        segments_count: total
+      };
+
+      // Ensure absolute URL if it's relative
+      if (result.dubbed_video_url && result.dubbed_video_url.startsWith('/')) {
+        result.dubbed_video_url = `${API_BASE_URL}${result.dubbed_video_url}`;
+      }
     }
 
     return {
       status,
-      completed: data.status === 'COMPLETED',
-      failed: data.status === 'FAILED',
-      result: data.result
+      completed: isCompleted,
+      failed: isFailed,
+      result: result
     };
   } catch (error) {
     console.error("Status Check Error:", error);

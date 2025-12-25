@@ -306,7 +306,7 @@ function App() {
         } catch (err) {
           console.error('Polling error:', err);
         }
-      }, 1500);
+      }, 5000);
 
       setStopProcessing(() => () => clearInterval(poll));
 
