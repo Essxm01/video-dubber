@@ -5,11 +5,14 @@ __pycache__/
 *.pyc
 .env
 .env.local
+.env.production
+.env.development
 
 # Build outputs
 dist/
 build/
 output/
+frontend/dist/
 
 # IDE
 .vscode/
@@ -38,12 +41,12 @@ pip-log.txt
 
 client_secret_*.json
 
-# AI Services (External - D:/Video Dubber/ai-services/)
+# AI Services
 ../ai-services/
 ai-services/
 ai_delivery/
 
-# AI Model Files (Large Binary Files)
+# AI Model Files
 *.pt
 *.pth
 *.bin

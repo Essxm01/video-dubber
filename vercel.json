@@ -1,31 +1,12 @@
 {
     "version": 2,
-    "builds": [
+    "rewrites": [
         {
-            "src": "frontend/package.json",
-            "use": "@vercel/static-build",
-            "config": {
-                "distDir": "dist"
-            }
+            "source": "/(.*)",
+            "destination": "/index.html"
         }
     ],
-    "routes": [
-        {
-            "src": "/api/(.*)",
-            "dest": "https://video-dubber-api.onrender.com/$1"
-        },
-        {
-            "src": "/(.*)",
-            "dest": "/frontend/$1"
-        }
-    ],
-    "framework": null,
     "installCommand": "cd frontend && npm install",
     "buildCommand": "cd frontend && npm run build",
-    "outputDirectory": "frontend/dist",
-    "env": {
-        "VITE_BACKEND_URL": "https://video-dubber-api.onrender.com",
-        "VITE_SUPABASE_URL": "https://phqtzwxslkqdgzukgmab.supabase.co",
-        "VITE_USE_MOCK_BACKEND": "false"
-    }
+    "outputDirectory": "frontend/dist"
 }

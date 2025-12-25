@@ -1,19 +1,19 @@
 import axios from 'axios';
 import { ProcessingStage, TaskStatus, ServiceMode } from '../types';
 
-// ---------------------------------------------------------------------------
-// ✅ ARCHITECTURE CONFIGURATION (Vercel -> Koyeb)
-// ---------------------------------------------------------------------------
-// 1. Try to read VITE_API_BASE_URL from Vercel Environment Variables.
-// 2. Fallback to localhost for local development.
-// 3. NEVER fallback to old Render URLs.
+// ===========================================================================
+// 🌍 CONFIGURATION: DYNAMIC BACKEND LINKING
+// ===========================================================================
+// Priority 1: Vercel/Netlify Environment Variable (Production)
+// Priority 2: Localhost (Development)
+// ❌ STRICTLY FORBIDDEN: Hardcoded URLs like 'onrender.com' or 'koyeb.app'
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 export const BACKEND_URL = API_BASE_URL;
 
-// 🔍 Debugging: Log the active connection to the browser console
-console.log(`🔌 API Service Initialized.`);
-console.log(`🎯 Connected to Backend: ${API_BASE_URL}`);
-// ---------------------------------------------------------------------------
+// Debug: Log active connection to console
+console.log(`🔌 [API Service] Initialized.`);
+console.log(`🎯 [API Service] Connected to: ${API_BASE_URL}`);
+// ===========================================================================
 
 // --- Interfaces ---
 export interface TaskResponse {
