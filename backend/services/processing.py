@@ -139,21 +139,19 @@ def smart_transcribe(audio_path: str):
             
             simplified = [{"id": i, "start": s["start"], "end": s["end"], "text": s["text"]} for i, s in enumerate(segments)]
             prompt = f"""
-            Task: Listen carefully to the audio. Diarize and analyze context.
-            1. Identify Speaker Gender based on Context + Pitch (M=Male, F=Female).
+            Task: Diarize speakers strictly as 'A' (Host/Main) or 'B' (Guest/Second).
+            1. Identify Speaker: return 'A' or 'B'.
             2. Identify Emotion (happy, sad, angry, neutral).
             3. Translate to Professional Arabic (Fusha).
             
             CRITICAL CONSTRAINTS:
-            - Use **Light Diacritics (التشكيل الوظيفي)** only on letters where pronunciation might be ambiguous. Do NOT over-vowelize.
-            - Strictly **NO English/Latin characters**. Transliterate names (e.g., Mark -> مارك). Delete technical jargon if untranslatable.
-            - Translate FULLY. Do not summarize or merge sentences. Preserve the flow.
-            
-            If text is music/noise, set text to "[Music]" or "(Silence)".
+            - Use **Light Diacritics (التشكيل الوظيفي)**.
+            - Strictly **NO English/Latin characters**. Transliterate names.
+            - Translate FULLY. Do not summarize.
             
             Input: {json.dumps(simplified)}
             
-            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker": "Speaker A", "gender": "M", "emotion": "neutral" }}]
+            Output JSON: [{{ "id": 0, "ar_text": "...", "speaker_label": "A", "emotion": "neutral" }}]
             """
 
             response = None
@@ -185,7 +183,7 @@ def smart_transcribe(audio_path: str):
                     if i in enrichment_map:
                         data = enrichment_map[i]
                         seg['text'] = data.get('ar_text', seg['text'])
-                        seg['speaker'] = data.get('speaker', 'Speaker A')
+                        seg['speaker_label'] = data.get('speaker_label', 'A') # V9: Explicit Label
                         seg['emotion'] = data.get('emotion', 'neutral')
         except Exception as e:
             print(f"⚠️ Enrichment Failed: {e}")
@@ -290,7 +288,10 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
         
         if no_speech > 0.45 or is_music_token or len(text_clean) < 2:
             print(f"  ⏭️ Smart VAD: Skipping Segment {idx} (Prob: {no_speech:.2f}, Text: '{text}')")
-            # Preserve original audio
+            # V9 Strict: Use Silence for skipped music/noise to prevent English leaks if cutting fails?
+            # actually preserve original is fine for music, BUT user said "Zero English Leaks".
+            # If we are unsure, silence is safer. But for Music, original is better. 
+            # We will stick to original audio for VAD skips (Music), but Panic Mode will be silence.
             cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
             subprocess.run(cmd, stdout=subprocess.DEVNULL)
             sanitize_audio(tts_final, tts_final)
@@ -298,25 +299,22 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             current_timeline_ms += (target_dur * 1000)
             continue
             
-        # 2. Hybrid Gender & Emotion Mapping
-        gender = seg.get("gender", "M").upper().strip()
-        emotion = seg.get("emotion", "neutral").lower().strip()
+        # 2. V9 Strict Speaker Mapping
+        speaker_label = seg.get("speaker_label", "A").upper().strip()
+        gender = seg.get("gender", "M").upper().strip() # Keep as fallback
         
-        # Map Voice
-        if "F" in gender:
-            voice = "ar-EG-SalmaNeural" # Female
-        elif "M" in gender:
-            voice = "ar-EG-ShakirNeural" # Male
+        # Priority: Explicit Label A/B -> Context Gender
+        if speaker_label == "B" or "2" in str(seg.get("speaker", "")):
+            voice = "ar-SA-HamedNeural" # Speaker B = Hamed
+        elif speaker_label == "A":
+            voice = "ar-EG-ShakirNeural" # Speaker A = Shakir
+        elif "F" in gender:
+            voice = "ar-EG-SalmaNeural"
         else:
-            # Fallback to simple heuristics if gender missing
-            speaker = seg.get("speaker", "Speaker A")
-            if "B" in speaker or "2" in str(speaker):
-                voice = "ar-SA-HamedNeural"
-            else:
-                voice = "ar-EG-ShakirNeural"
+            voice = "ar-EG-ShakirNeural" # Default
 
         # Map Style (Emotions)
-        # Azure Styles: cheerful, sad, angry, excited, hopeful, unfriendly, terrifying, shouting, whispering
+        emotion = seg.get("emotion", "neutral").lower().strip()
         style_map = {
             "happy": "cheerful",
             "excited": "cheerful",
@@ -392,12 +390,11 @@ def process_segment_pipeline(video_chunk_path: str, output_chunk_path: str):
             dubbed_files.append(tts_final)
             current_timeline_ms += target_dur_ms
         elif ratio > 2.0:
-            # PANIC MODE: Hallucination or Text too long.
-            print(f"  ⚠️ PANIC: Ratio {ratio:.2f}x > 2.0. Dropping TTS & Using Original Audio.")
-            cmd = ["ffmpeg", "-i", audio_path, "-ss", str(seg["start"]), "-t", str(target_dur), "-y", tts_final]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL)
-            sanitize_audio(tts_final, tts_final)
-            dubbed_files.append(tts_final)
+            # V9 PANIC MODE: STRICT SILENCE/STRETCH. NO ORIGINAL AUDIO.
+            print(f"  ⚠️ PANIC: Ratio {ratio:.2f}x > 2.0. Generating Silence to prevent English leak.")
+            sil_path = f"{base_name}_panic_sil_{idx}.wav"
+            generate_silence(int(target_dur * 1000), sil_path)
+            dubbed_files.append(sil_path)
             current_timeline_ms += (target_dur * 1000)
         else:
             # > 1.20x but <= 2.0
