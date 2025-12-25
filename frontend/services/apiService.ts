@@ -1,9 +1,19 @@
 import axios from 'axios';
 import { ProcessingStage, TaskStatus, ServiceMode } from '../types';
 
-// ✅ LIVE KOYEB BACKEND (V9)
-export const API_BASE_URL = 'https://sacred-fawn-arab-dubbing-7b0a1186.koyeb.app';
+// ---------------------------------------------------------------------------
+// ✅ ARCHITECTURE CONFIGURATION (Vercel -> Koyeb)
+// ---------------------------------------------------------------------------
+// 1. Try to read VITE_API_BASE_URL from Vercel Environment Variables.
+// 2. Fallback to localhost for local development.
+// 3. NEVER fallback to old Render URLs.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 export const BACKEND_URL = API_BASE_URL;
+
+// 🔍 Debugging: Log the active connection to the browser console
+console.log(`🔌 API Service Initialized.`);
+console.log(`🎯 Connected to Backend: ${API_BASE_URL}`);
+// ---------------------------------------------------------------------------
 
 // --- Interfaces ---
 export interface TaskResponse {
