@@ -4,7 +4,7 @@ Split-Process-Stream Pipeline with GCS Storage
 """
 import os
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, Request, HTTPException
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, FileResponse
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -100,12 +100,20 @@ async def process_video_legacy(
 # PROXY STREAM ENDPOINT
 @app.get("/stream/{job_id}/{filename}")
 async def stream_video(job_id: str, filename: str):
-    """Redirects to GCS Signed URL to allow direct playback with Range support."""
+    """Redirects to GCS Signed URL OR serves local file if GCS is missing."""
     blob_name = f"jobs/{job_id}/{filename}"
+    
+    # 1. Try GCS Signed URL
     signed_url = gcs_service.generate_signed_url(blob_name)
-    if not signed_url:
-        return {"error": "File not found or GCS error"}, 404
-    return RedirectResponse(url=signed_url)
+    if signed_url:
+        return RedirectResponse(url=signed_url)
+
+    # 2. Fallback: Local Storage (If GCS failed)
+    local_path = os.path.join("output", filename)
+    if os.path.exists(local_path):
+        return FileResponse(local_path, media_type="video/mp4", filename=filename)
+
+    return {"error": "File not found (GCS & Local)"}, 404
 
 @app.get("/job/{job_id}")
 def get_job_status(job_id: str, request: Request):
@@ -196,13 +204,22 @@ def process_job_sequentially(job_id: str, segments: list, source_path: str):
                 gcs_url = gcs_service.upload_file(output_path, f"jobs/{job_id}/{output_name}")
             
             # Update Status: Ready
-            status = "ready" if gcs_url else "failed"
-            db_service.update_segment_status(job_id, idx, status, media_url=gcs_url)
-            
-            # CLEANUP (Immediate Deletion Rule)
-            job_manager.cleanup_segment(seg_path)  # Delete source chunk
-            if os.path.exists(output_path):
-                os.remove(output_path)  # Delete local output
+            if gcs_url:
+                status = "ready"
+                db_service.update_segment_status(job_id, idx, status, media_url=gcs_url)
+                # Cleanup local if GCS success
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+            else:
+                # LOCAL FALLBACK (No GCS Creds)
+                print(f"⚠️ GCS Upload Failed. Keeping {output_name} locally.")
+                # Construct local proxy URL
+                local_url = f"/stream/{job_id}/{output_name}"
+                db_service.update_segment_status(job_id, idx, "ready", media_url=local_url)
+                # DO NOT DELETE output_path! Keep it for serving.
+
+            # Cleanup Source Chunk always
+            job_manager.cleanup_segment(seg_path)
             
         except Exception as e:
             print(f"❌ Segment {idx} Failed: {e}")
