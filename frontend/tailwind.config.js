@@ -10,7 +10,7 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['Cairo', 'sans-serif'],
+                sans: ['Inter', 'Tajawal', 'system-ui', 'sans-serif'],
             },
             animation: {
                 'gradient-x': 'gradient-x 6s ease infinite',
