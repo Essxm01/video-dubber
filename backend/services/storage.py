@@ -7,16 +7,31 @@ class GCSStorage:
     def __init__(self):
         # Ensure we have credentials
         self.credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        self.credentials_json_str = os.getenv("GCS_CREDENTIALS_JSON")
         self.project_id = os.getenv("GCP_PROJECT_ID")
         self.bucket_name = "processed-segments" # Default bucket
         
-        if self.credentials_path and os.path.exists(self.credentials_path):
+        self.client = None
+        
+        # 1. Priority: JSON String in Env Var (Koyeb/Render)
+        if self.credentials_json_str:
+            try:
+                import json
+                print("🔑 Found GCS_CREDENTIALS_JSON env var. Authenticating...")
+                info = json.loads(self.credentials_json_str)
+                creds = service_account.Credentials.from_service_account_info(info)
+                self.client = storage.Client(credentials=creds, project=self.project_id)
+            except Exception as e:
+                print(f"❌ Failed to parse GCS_CREDENTIALS_JSON: {e}")
+
+        # 2. File Path (Local Dev)
+        if not self.client and self.credentials_path and os.path.exists(self.credentials_path):
+            print(f"📂 Found Key File: {self.credentials_path}")
             self.client = storage.Client.from_service_account_json(self.credentials_path)
-        else:
-            # Fallback for local env if env var is not set but gcloud auth is present, 
-            # OR if running on Render/Cloud with implicit auth.
-            # Ideally the user should provide the JSON key file path in .env
-            print("⚠️ GCS: No JSON key found, attempting default credentials...")
+            
+        # 3. Fallback (Default / Implicit)
+        if not self.client:
+            print("⚠️ GCS: No valid key found. Attempting Default Credentials...")
             try:
                 self.client = storage.Client()
             except Exception as e:
