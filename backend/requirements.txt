@@ -6,14 +6,9 @@ python-dotenv
 
 groq
 azure-cognitiveservices-speech
-moviepy
 ffmpeg-python
-deep-translator
-nest_asyncio
 requests
 google-genai>=0.5.0
-google-generativeai>=0.8.3
 pydub
 supabase
-azure-cognitiveservices-speech
 google-cloud-storage
