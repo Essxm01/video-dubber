@@ -11,7 +11,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 export const BACKEND_URL = API_BASE_URL;
 
 // Debug: Log active connection to console
-console.log(`🔌 [API Service] Initialized.`);
+console.log(`🔌 [API Service] Initialized (Force Build 🚀).`);
 console.log(`🎯 [API Service] Connected to: ${API_BASE_URL}`);
 // ===========================================================================
 
